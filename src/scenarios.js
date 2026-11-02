@@ -13,7 +13,7 @@ export const scenarios = {
     units: [{ x: 1, y: 1 }, { x: 6, y: 1 }, { x: 1, y: 6 }, { x: 6, y: 6 }, { x: 3, y: 3 }],
   }),
 
-  'Contest (lowest id wins)': () => {
+  'Contest (first ordered wins)': () => {
     const g = new Game({ width: SIZE, height: SIZE, units: [{ x: 2, y: 3 }, { x: 4, y: 3 }] });
     g.queueOrder(2, move(3, 3));
     g.queueOrder(1, move(3, 3));

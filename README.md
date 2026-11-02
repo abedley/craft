@@ -45,9 +45,13 @@ test/                 node:test suites for the engine
 
 ### Collision rules (`src/engine/resolve.js`)
 
-1. **Contested cell** – several units step into the same cell: lowest unit id wins, the rest stay.
+Guiding rule: **whoever got to a cell first keeps it, and the colliding unit doesn't move.**
+
+1. **Contested cell** – several units step into the same empty cell on the same tick: the unit
+   whose move order was given first wins (orders are stamped with a sequence number when applied;
+   unit id breaks exact ties). The rest don't move.
 2. **Swap** – two units try to trade cells: both stay.
-3. **Occupied** – a unit can enter an occupied cell only if its occupant leaves this tick.
+3. **Occupied** – a unit standing in a cell keeps it. A unit can enter an occupied cell only if its occupant leaves this tick.
    Propagated to a fixed point, so a line of units moves together if its front is free and
    stops together if not.
 4. **Rotation** – closed loops of 3+ units all move.

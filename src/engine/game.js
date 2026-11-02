@@ -22,6 +22,7 @@ export class Game {
       height,
       tick: 0,
       nextUnitId: 1,
+      nextOrderSeq: 1, // stamps applied orders so "first ordered" is well defined
       units: [], // kept sorted by id
       queue: [], // [{ unitId, order }]
     };
@@ -33,6 +34,9 @@ export class Game {
   static fromSnapshot(snapshot) {
     const game = new Game({ width: snapshot.width, height: snapshot.height });
     game.state = structuredClone(snapshot);
+    // Snapshots from before order sequencing existed.
+    game.state.nextOrderSeq ??= 1;
+    for (const u of game.state.units) u.orderSeq ??= null;
     return game;
   }
 
@@ -72,7 +76,8 @@ export class Game {
     const unitId = id ?? this.state.nextUnitId;
     if (this.getUnit(unitId)) throw new Error(`Unit id ${unitId} already exists`);
     this.state.nextUnitId = Math.max(this.state.nextUnitId, unitId + 1);
-    const unit = { id: unitId, x, y, order: null };
+    // orderSeq: when the current order was applied (lower = given earlier).
+    const unit = { id: unitId, x, y, order: null, orderSeq: null };
     this.state.units.push(unit);
     this.state.units.sort((a, b) => a.id - b.id);
     return unit;
@@ -105,7 +110,8 @@ export class Game {
    * Advance the simulation by one step:
    *   1. apply queued orders to units (in queue order),
    *   2. every unit with a move order picks the next cell toward its target,
-   *   3. resolve all moves simultaneously (see resolve.js),
+   *   3. resolve all moves simultaneously (see resolve.js): whoever got to a
+   *      cell first keeps it and the colliding unit doesn't move,
    *   4. units that reached their target drop the order.
    * Returns a list of events describing what happened.
    */
@@ -121,6 +127,7 @@ export class Game {
         continue;
       }
       unit.order = order;
+      unit.orderSeq = s.nextOrderSeq++;
       events.push({ type: 'orderApplied', unitId, order });
     }
     s.queue = [];
@@ -128,7 +135,7 @@ export class Game {
     // 2. Intents.
     const intents = s.units.map((u) => {
       const next = nextStep(u);
-      return { id: u.id, x: u.x, y: u.y, tx: next.x, ty: next.y };
+      return { id: u.id, x: u.x, y: u.y, tx: next.x, ty: next.y, priority: u.orderSeq };
     });
 
     // 3. Resolve.
@@ -147,6 +154,7 @@ export class Game {
       if (u.order?.type === OrderType.MOVE && u.x === u.order.x && u.y === u.order.y) {
         events.push({ type: 'arrived', unitId: u.id, at: [u.x, u.y] });
         u.order = null;
+        u.orderSeq = null;
       }
     }
 

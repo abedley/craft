@@ -3,17 +3,22 @@
 // Every unit declares the cell it wants to occupy after this tick (its
 // "intent"; a unit that is not moving intends to stay put). All moves happen
 // at the same time, so the outcome must not depend on the order in which we
-// look at units. Rules, applied in this order:
+// look at units.
 //
-//   1. Contested cell: when several units want to enter the same cell, the
-//      unit with the lowest id wins; the others are blocked ("contested").
-//   2. Swap: two units trying to trade cells pass through each other, which
-//      is not allowed; both are blocked ("swap").
-//   3. Occupied: a unit may enter a cell that is currently occupied only if
-//      the occupant successfully leaves this tick. Otherwise it is blocked
-//      ("occupied"). This is repeated until nothing changes, so a blocked
-//      unit at the front of a line blocks the whole line behind it, while a
-//      line that is free at the front moves together ("train").
+// Guiding rule: whoever got to a cell first keeps it, and the unit that
+// collides with it does not move. Concretely, applied in this order:
+//
+//   1. Contested cell: several units step into the same empty cell on the
+//      same tick, so nobody is there yet. The unit whose move order was given
+//      first (lowest `priority`, then lowest id) gets the cell; the others
+//      don't move ("contested").
+//   2. Swap: two units trying to trade cells would pass through each other;
+//      neither moves ("swap").
+//   3. Occupied: a unit standing in a cell keeps it. A unit may only enter an
+//      occupied cell if the occupant successfully leaves this tick; otherwise
+//      it doesn't move ("occupied"). This is repeated until nothing changes,
+//      so a blocked unit at the front of a line blocks the whole line behind
+//      it, while a line that is free at the front moves together ("train").
 //
 // Closed loops of three or more units (A->B->C->A) all move: every cell is
 // vacated and refilled in the same instant, with no two units passing
@@ -22,8 +27,10 @@
 // The function is pure: it returns a result and does not mutate its input.
 
 /**
- * @param {Array<{id:number,x:number,y:number,tx:number,ty:number}>} intents
- *   One entry per unit: current cell (x,y) and desired cell (tx,ty).
+ * @param {Array<{id:number,x:number,y:number,tx:number,ty:number,priority?:number}>} intents
+ *   One entry per unit: current cell (x,y), desired cell (tx,ty), and
+ *   priority for contested cells (lower wins; usually the order's sequence
+ *   number, so the earliest-given order wins). Ties fall back to unit id.
  * @returns {Map<number, {x:number,y:number,moved:boolean,blocked:null|{reason:string,by:number|null}}>}
  */
 export function resolveMoves(intents) {
@@ -43,9 +50,11 @@ export function resolveMoves(intents) {
     if (!blocked.has(id)) blocked.set(id, { reason, by });
   };
 
-  // 1. Contested destinations: lowest id wins.
-  const claims = new Map(); // dest cell -> first (lowest id) claimant
-  for (const it of sorted) {
+  // 1. Contested destinations: earliest order (then lowest id) wins.
+  const prio = (it) => it.priority ?? Infinity;
+  const byPriority = [...sorted].sort((a, b) => prio(a) - prio(b) || a.id - b.id);
+  const claims = new Map(); // dest cell -> winning claimant
+  for (const it of byPriority) {
     if (!isMover(it)) continue;
     const k = key(it.tx, it.ty);
     if (claims.has(k)) block(it.id, 'contested', claims.get(k));

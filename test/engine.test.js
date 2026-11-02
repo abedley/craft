@@ -37,14 +37,42 @@ test('invalid orders are rejected', () => {
   assert.throws(() => g.queueOrder(99, move(1, 1)), /No unit/);
 });
 
-test('contested cell: lowest id wins regardless of queue order', () => {
+test('contested cell: the unit ordered first gets it, the other does not move', () => {
   const g = new Game({ width: 3, height: 1, units: [{ x: 0, y: 0 }, { x: 2, y: 0 }] });
   g.queueOrder(2, move(1, 0));
   g.queueOrder(1, move(1, 0));
   const events = g.tick();
-  assert.deepEqual(pos(g, 1), [1, 0]);
-  assert.deepEqual(pos(g, 2), [2, 0]);
-  assert.ok(events.some((e) => e.type === 'blocked' && e.unitId === 2 && e.reason === 'contested' && e.by === 1));
+  assert.deepEqual(pos(g, 2), [1, 0]);
+  assert.deepEqual(pos(g, 1), [0, 0]);
+  assert.ok(events.some((e) => e.type === 'blocked' && e.unitId === 1 && e.reason === 'contested' && e.by === 2));
+});
+
+test('contested cell: an order from an earlier turn beats a newer one', () => {
+  const g = new Game({ width: 5, height: 1, units: [{ x: 0, y: 0 }, { x: 4, y: 0 }] });
+  g.queueOrder(2, move(0, 0)); // turn 1: unit 2 starts walking left
+  g.tick(); // 2 -> (3,0)
+  g.tick(); // 2 -> (2,0)
+  g.queueOrder(1, move(1, 0)); // turn 3: unit 1 (lower id) targets the same cell
+  g.tick();
+  assert.deepEqual(pos(g, 2), [1, 0]);
+  assert.deepEqual(pos(g, 1), [0, 0]);
+});
+
+test('a unit already in a cell keeps it; the unit moving in does not move', () => {
+  const g = new Game({ width: 3, height: 1, units: [{ x: 0, y: 0 }, { x: 1, y: 0 }] });
+  g.queueOrder(1, move(2, 0));
+  for (let i = 0; i < 3; i++) g.tick();
+  assert.deepEqual(pos(g, 1), [0, 0]);
+  assert.deepEqual(pos(g, 2), [1, 0]);
+});
+
+test('contested cell with equal priority falls back to lowest id', () => {
+  const out = resolveMoves([
+    { id: 2, x: 2, y: 0, tx: 1, ty: 0, priority: 5 },
+    { id: 1, x: 0, y: 0, tx: 1, ty: 0, priority: 5 },
+  ]);
+  assert.equal(out.get(1).moved, true);
+  assert.deepEqual(out.get(2).blocked, { reason: 'contested', by: 1 });
 });
 
 test('head-on swap: both units blocked', () => {
