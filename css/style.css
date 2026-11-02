@@ -1,0 +1,131 @@
+:root {
+  --bg: #111418;
+  --panel: #1a1f26;
+  --line: #2b323c;
+  --text: #e6e9ee;
+  --muted: #8a94a3;
+  --accent: #4da3ff;
+  --warn: #ff6b6b;
+  --ok: #5fd38d;
+  --gutter: 12px;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 520px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  padding:
+    calc(env(safe-area-inset-top) + 8px)
+    calc(env(safe-area-inset-right) + var(--gutter))
+    calc(env(safe-area-inset-bottom) + 8px)
+    calc(env(safe-area-inset-left) + var(--gutter));
+}
+
+.status {
+  display: flex;
+  justify-content: space-between;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.status b { color: var(--text); font-weight: 600; }
+.hash b { font-family: ui-monospace, Menlo, monospace; }
+
+#board-wrap { width: 100%; aspect-ratio: 1; }
+#board {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  background: var(--panel);
+  touch-action: none;
+}
+
+.hint { min-height: 1.35em; color: var(--muted); font-size: 13px; }
+.hint.error { color: var(--warn); }
+
+.row { display: flex; gap: 8px; align-items: center; }
+.row > * { flex: 1; }
+
+button, select {
+  min-height: 44px; /* Apple's minimum touch target */
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  touch-action: manipulation;
+}
+button:active { filter: brightness(1.3); }
+button:disabled { opacity: 0.4; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button.on { border-color: var(--ok); color: var(--ok); }
+
+.segmented { gap: 0; }
+.segmented button { border-radius: 0; }
+.segmented button:first-child { border-radius: 8px 0 0 8px; }
+.segmented button:last-child { border-radius: 0 8px 8px 0; }
+.segmented button.active { background: var(--line); border-color: var(--accent); }
+
+.toggle { display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--muted); }
+.toggle input { width: 20px; height: 20px; }
+
+.panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 180px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.tabs { display: flex; border-bottom: 1px solid var(--line); }
+.tabs button { flex: 1; border: 0; border-radius: 0; background: none; color: var(--muted); }
+.tabs button.active { color: var(--text); box-shadow: inset 0 -2px var(--accent); }
+
+.tab-body {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+  font: 12px/1.5 ui-monospace, Menlo, monospace;
+  -webkit-overflow-scrolling: touch;
+}
+.tab-body[hidden] { display: none; }
+.tab-body .empty { color: var(--muted); font-family: inherit; }
+.tab-body .tick-head { color: var(--accent); margin-top: 6px; }
+.tab-body .blocked { color: var(--warn); }
+.tab-body .moved { color: var(--text); }
+.tab-body .arrived { color: var(--ok); }
+.tab-body .meta { color: var(--muted); }
+
+#tab-state { display: flex; flex-direction: column; gap: 8px; }
+#tab-state[hidden] { display: none; }
+#state-json {
+  flex: 1;
+  min-height: 160px;
+  width: 100%;
+  resize: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1.4 ui-monospace, Menlo, monospace;
+  /* 16px+ would avoid iOS zoom-on-focus; zoom is already disabled via viewport */
+}

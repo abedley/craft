@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#111418">
+  <title>Craft</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main id="app">
+    <header class="status">
+      <span>Tick <b id="tick">0</b></span>
+      <span>Queue <b id="queue-count">0</b></span>
+      <span class="hash">#<b id="hash">--------</b></span>
+    </header>
+
+    <div id="board-wrap">
+      <canvas id="board" aria-label="Game board"></canvas>
+    </div>
+
+    <div class="hint" id="hint">Tap a unit to select it.</div>
+
+    <div class="row segmented" role="radiogroup" aria-label="Tap mode">
+      <button data-mode="order" class="active">Order</button>
+      <button data-mode="add">Add unit</button>
+      <button data-mode="remove">Remove</button>
+    </div>
+
+    <div class="row">
+      <button id="btn-back" title="Undo last tick">&#9664; Back</button>
+      <button id="btn-tick" class="primary">Tick &#9654;</button>
+      <button id="btn-auto" title="Tick automatically">Auto</button>
+    </div>
+
+    <div class="row">
+      <button id="btn-clear" title="Clear queued orders">Clear</button>
+      <label class="toggle"><input type="checkbox" id="chk-preview" checked> Preview</label>
+      <select id="scenario" aria-label="Scenario"></select>
+    </div>
+
+    <section class="panel">
+      <nav class="tabs">
+        <button data-tab="queue" class="active">Queue</button>
+        <button data-tab="log">Log</button>
+        <button data-tab="units">Units</button>
+        <button data-tab="state">State</button>
+      </nav>
+      <div class="tab-body" id="tab-queue"></div>
+      <div class="tab-body" id="tab-log" hidden></div>
+      <div class="tab-body" id="tab-units" hidden></div>
+      <div class="tab-body" id="tab-state" hidden>
+        <div class="row">
+          <button id="btn-copy">Copy</button>
+          <button id="btn-load">Load from text</button>
+        </div>
+        <textarea id="state-json" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
