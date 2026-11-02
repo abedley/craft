@@ -1,7 +1,7 @@
 // Preset boards for exercising the engine from the debug UI. Each one sets
 // up units and queues orders so pressing Tick shows a specific collision rule.
 
-import { Game, move } from './engine/index.js';
+import { Game, move, shoot } from './engine/index.js';
 
 const SIZE = 8;
 
@@ -79,6 +79,41 @@ export const scenarios = {
     g.queueOrder(2, move(0, 7));
     g.queueOrder(3, move(7, 0));
     g.queueOrder(4, move(0, 0));
+    return g;
+  },
+
+  'Gunslinger: shot': () => {
+    const g = new Game({
+      width: SIZE, height: SIZE,
+      units: [{ x: 0, y: 3, type: 'gunslinger' }, { x: 6, y: 3 }, { x: 7, y: 3 }],
+    });
+    g.queueOrder(1, shoot('right')); // hits unit 2 at t=6/4; unit 3 is shielded
+    return g;
+  },
+
+  'Gunslinger: dodge': () => {
+    // Unit 2 steps out of the line at t=1; the shot reaches x=5 at t=5/4.
+    const g = new Game({
+      width: SIZE, height: SIZE,
+      units: [{ x: 0, y: 3, type: 'gunslinger' }, { x: 5, y: 3 }, { x: 4, y: 4 }],
+    });
+    g.queueOrder(1, shoot('right'));
+    g.queueOrder(2, move(5, 2));
+    g.queueOrder(3, move(4, 3)); // ...but unit 3 walks into its path at t=1
+    return g;
+  },
+
+  'Gunslinger: duel': () => {
+    const g = new Game({
+      width: SIZE, height: SIZE,
+      units: [{ x: 0, y: 2, type: 'gunslinger' }, { x: 7, y: 2, type: 'gunslinger' }, { x: 3, y: 3 }],
+    });
+    g.queueOrder(1, shoot('right'));
+    g.queueOrder(2, shoot('left'));
+    // Unit 3 steps into (3,2) at t=1, the same instant unit 2's shot gets
+    // there, and takes the bullet. Unit 1's shot passed (3,2) at t=3/4 and
+    // goes on to kill unit 2. Unit 1 survives.
+    g.queueOrder(3, move(3, 2));
     return g;
   },
 

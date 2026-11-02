@@ -25,14 +25,16 @@
     <div class="hint" id="hint">Tap a unit to select it.</div>
 
     <div class="row segmented" role="radiogroup" aria-label="Tap mode">
-      <button data-mode="order" class="active">Order</button>
-      <button data-mode="add">Add unit</button>
+      <button data-mode="move" class="active">Move</button>
+      <button data-mode="shoot">Shoot</button>
+      <button data-mode="add">Add</button>
       <button data-mode="remove">Remove</button>
     </div>
 
-    <div class="row speed-row" aria-label="Unit speed">
-      <span class="label">Speed</span>
-      <div class="segmented" id="speed"></div>
+    <div class="row speed-row">
+      <select id="unit-type" aria-label="Type for new units"></select>
+      <span class="label">Spd</span>
+      <div class="segmented" id="speed" aria-label="Unit speed"></div>
     </div>
 
     <div class="row">

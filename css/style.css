@@ -86,6 +86,7 @@ button.on { border-color: var(--ok); color: var(--ok); }
 
 .speed-row { gap: 10px; }
 .speed-row .label { flex: 0 0 auto; color: var(--muted); }
+.speed-row select { flex: 0 0 38%; }
 .speed-row .segmented { display: flex; flex: 1; }
 .speed-row .segmented button { flex: 1; min-width: 0; padding: 0; }
 
@@ -119,6 +120,8 @@ button.on { border-color: var(--ok); color: var(--ok); }
 .tab-body .blocked { color: var(--warn); }
 .tab-body .moved { color: var(--text); }
 .tab-body .arrived { color: var(--ok); }
+.tab-body .killed { color: var(--warn); font-weight: 700; }
+.tab-body .shot { color: #ffa94d; }
 .tab-body .meta { color: var(--muted); }
 
 #tab-state { display: flex; flex-direction: column; gap: 8px; }

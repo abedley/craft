@@ -1,17 +1,20 @@
 // Debug UI: wires the DOM controls to a Game instance.
 //
 // Interaction model (touch first):
-//   Order mode   - tap a unit to select it, tap an empty cell to queue
+//   Move mode    - tap a unit to select it, tap an empty cell to queue
 //                  move(x,y) for the selected unit. Tap the selected unit
 //                  again to deselect.
-//   Add mode     - tap an empty cell to spawn a unit at the chosen speed.
+//   Shoot mode   - tap a unit that can shoot to select it, then tap any cell
+//                  (including a target unit) to queue shoot() in the
+//                  direction of that cell (dominant axis, x on ties).
+//   Add mode     - tap an empty cell to spawn a unit of the chosen type.
 //   Speed        - with a unit selected, sets that unit's speed (cells per
 //                  tick); otherwise sets the speed used for new units.
 //   Remove mode  - tap a unit to delete it.
 // "Tick" runs one engine step. "Back" restores the snapshot before the last
 // tick (the engine is deterministic, so this is an exact undo).
 
-import { Game, MAX_SPEED, move } from '../engine/index.js';
+import { Game, MAX_SPEED, move, shoot, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
 import { Renderer } from './renderer.js';
 import { scenarios } from '../scenarios.js';
 
@@ -21,16 +24,18 @@ const $ = (sel) => document.querySelector(sel);
 export class DebugUI {
   constructor() {
     this.renderer = new Renderer($('#board'));
-    this.mode = 'order';
+    this.mode = 'move';
     this.selectedId = null;
     this.history = []; // [{ snapshot, tick, events }] - state before each tick
     this.log = []; // [{ tick, events }]
     this.autoTimer = null;
     this.tab = 'queue';
-    this.newUnitSpeed = 1;
+    this.newUnitType = DEFAULT_UNIT_TYPE;
+    this.newUnitSpeed = UnitTypes[DEFAULT_UNIT_TYPE].speed;
 
     this.populateScenarios();
     this.populateSpeeds();
+    this.populateTypes();
     this.bind();
     this.loadScenario(Object.keys(scenarios)[1]);
     this.renderer.resize(this.game);
@@ -58,6 +63,24 @@ export class DebugUI {
       btn.addEventListener('click', () => this.onSpeedTap(v));
       wrap.append(btn);
     }
+  }
+
+  populateTypes() {
+    const sel = $('#unit-type');
+    for (const [key, def] of Object.entries(UnitTypes)) {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = def.name;
+      sel.append(opt);
+    }
+    sel.value = this.newUnitType;
+    sel.addEventListener('change', () => {
+      this.newUnitType = sel.value;
+      this.newUnitSpeed = UnitTypes[sel.value].speed;
+      if (this.mode !== 'add') this.setMode('add');
+      this.hint(`New units: ${UnitTypes[sel.value].name}, speed ${this.newUnitSpeed}. Tap an empty cell.`);
+      this.render();
+    });
   }
 
   onSpeedTap(v) {
@@ -124,9 +147,13 @@ export class DebugUI {
   setMode(mode) {
     this.mode = mode;
     document.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
-    if (mode !== 'order') this.selectedId = null;
+    if (mode === 'add' || mode === 'remove') this.selectedId = null;
+    if (mode === 'shoot' && this.selectedId !== null && !this.canShoot(this.game.getUnit(this.selectedId))) {
+      this.selectedId = null;
+    }
     this.hint({
-      order: 'Tap a unit to select it, then tap a cell to queue a move.',
+      move: 'Tap a unit to select it, then tap a cell to queue a move.',
+      shoot: 'Tap a gunslinger, then tap a cell or unit to shoot toward it.',
       add: 'Tap an empty cell to add a unit.',
       remove: 'Tap a unit to remove it.',
     }[mode]);
@@ -146,15 +173,33 @@ export class DebugUI {
       switch (this.mode) {
         case 'add':
           if (unit) return this.hint(`Cell ${x},${y} is occupied.`, true);
-          this.game.addUnit(x, y, undefined, { speed: this.newUnitSpeed });
-          this.hint(`Added speed-${this.newUnitSpeed} unit at ${x},${y}.`);
+          this.game.addUnit(x, y, undefined, { type: this.newUnitType, speed: this.newUnitSpeed });
+          this.hint(`Added ${UnitTypes[this.newUnitType].name} at ${x},${y}.`);
           break;
         case 'remove':
           if (!unit) return;
           this.game.removeUnit(unit.id);
           this.hint(`Removed unit ${unit.id}.`);
           break;
-        case 'order':
+        case 'shoot': {
+          const sel = this.selectedId !== null ? this.game.getUnit(this.selectedId) : null;
+          if (unit && unit.id === this.selectedId) {
+            this.selectedId = null;
+            this.hint('Deselected.');
+          } else if (sel && this.canShoot(sel)) {
+            const dir = directionToward(sel, x, y);
+            this.game.queueOrder(sel.id, shoot(dir));
+            this.hint(`Queued: unit ${sel.id} shoot(${dir}).`);
+          } else if (unit && this.canShoot(unit)) {
+            this.selectedId = unit.id;
+            this.hint(`Unit ${unit.id} selected. Tap a cell to shoot toward it.`);
+          } else if (unit) {
+            this.hint(`Unit ${unit.id} (${UnitTypes[unit.type].name}) can't shoot.`, true);
+            return;
+          }
+          break;
+        }
+        case 'move':
         default:
           if (unit && unit.id === this.selectedId) {
             this.selectedId = null;
@@ -173,14 +218,20 @@ export class DebugUI {
     this.render();
   }
 
+  canShoot(unit) {
+    return !!unit && UnitTypes[unit.type].orders.includes('shoot');
+  }
+
   tick() {
     const before = this.game.snapshot();
     const tick = this.game.tickCount;
     const events = this.game.tick();
     this.history.push({ snapshot: before });
     this.log.push({ tick, events });
-    const blocked = events.filter((e) => e.type === 'blocked').length;
-    this.hint(`Tick ${tick}: ${events.filter((e) => e.type === 'moved').length} moved, ${blocked} blocked.`);
+    const count = (type) => events.filter((e) => e.type === type).length;
+    const killed = count('killed');
+    this.hint(`Tick ${tick}: ${count('moved')} moved, ${count('blocked')} blocked${killed ? `, ${killed} killed` : ''}.`);
+    if (this.selectedId !== null && !this.game.getUnit(this.selectedId)) this.selectedId = null;
     this.render();
     return events;
   }
@@ -201,9 +252,10 @@ export class DebugUI {
     $('#btn-auto').classList.add('on');
     this.autoTimer = setInterval(() => {
       // Stop once nothing is left to do.
-      if (this.game.queue.length === 0 && this.game.units.every((u) => !u.order)) {
+      const g = this.game;
+      if (g.queue.length === 0 && g.projectiles.length === 0 && g.units.every((u) => !u.order)) {
         this.stopAuto();
-        this.hint('Auto stopped: all units idle.');
+        this.hint('Auto stopped: nothing moving.');
         return;
       }
       this.tick();
@@ -255,11 +307,15 @@ export class DebugUI {
     const events = this.game.clone().tick();
     const moved = new Map();
     const blocked = new Map();
+    const projectiles = [];
+    const killed = new Set();
     for (const e of events) {
       if (e.type === 'moved') moved.set(e.unitId, e.path);
       if (e.type === 'blocked') blocked.set(e.unitId, e.reason);
+      if (e.type === 'projectileMoved') projectiles.push(e.path);
+      if (e.type === 'killed') killed.add(e.unitId);
     }
-    return { moved, blocked };
+    return { moved, blocked, projectiles, killed };
   }
 
   render() {
@@ -268,7 +324,8 @@ export class DebugUI {
     $('#queue-count').textContent = g.queue.length;
     $('#hash').textContent = g.hash();
     $('#btn-back').disabled = this.history.length === 0;
-    const shownSpeed = this.selectedId !== null ? g.getUnit(this.selectedId)?.speed : this.newUnitSpeed;
+    const selected = this.selectedId !== null ? g.getUnit(this.selectedId) : null;
+    const shownSpeed = selected ? selected.speed : this.newUnitSpeed;
     document.querySelectorAll('[data-speed]').forEach((b) => b.classList.toggle('active', Number(b.dataset.speed) === shownSpeed));
     this.renderer.draw(g, { selectedId: this.selectedId, preview: this.computePreview() });
     this.renderPanel();
@@ -299,9 +356,10 @@ export class DebugUI {
       }
       case 'units': {
         const el = $('#tab-units');
-        el.innerHTML = g.units.length
-          ? g.units.map((u) => `<div>#${u.id} @ ${u.x},${u.y} spd ${u.speed} ${u.order ? fmtOrder(u.order) : '<span class="meta">idle</span>'}</div>`).join('')
-          : '<div class="empty">No units.</div>';
+        const projLines = g.projectiles.map((p) => `<div class="shot">projectile ${p.id} @ ${p.x},${p.y} → ${p.dir} (from #${p.ownerId})</div>`).join('');
+        el.innerHTML = projLines + (g.units.length
+          ? g.units.map((u) => `<div>#${u.id} ${UnitTypes[u.type].name} @ ${u.x},${u.y} spd ${u.speed} ${u.order ? fmtOrder(u.order) : '<span class="meta">idle</span>'}</div>`).join('')
+          : '<div class="empty">No units.</div>');
         break;
       }
       case 'state': {
@@ -314,7 +372,17 @@ export class DebugUI {
 }
 
 function fmtOrder(o) {
-  return o.type === 'move' ? `move(${o.x}, ${o.y})` : o.type;
+  if (o.type === 'move') return `move(${o.x}, ${o.y})`;
+  if (o.type === 'shoot') return `shoot(${o.dir})`;
+  return o.type;
+}
+
+/** Direction from a unit toward a cell: dominant axis, x on ties. */
+function directionToward(u, x, y) {
+  const dx = x - u.x;
+  const dy = y - u.y;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 'right' : 'left';
+  return dy > 0 ? 'down' : 'up';
 }
 
 function fmtEvent(e) {
@@ -323,6 +391,10 @@ function fmtEvent(e) {
     case 'blocked': return `<div class="blocked">#${e.unitId} blocked at ${e.at} (${e.reason}${e.by != null ? ` by #${e.by}` : ''}${e.time ? ` @t=${e.time}` : ''})</div>`;
     case 'arrived': return `<div class="arrived">#${e.unitId} arrived at ${e.at}</div>`;
     case 'orderApplied': return `<div class="meta">#${e.unitId} ← ${fmtOrder(e.order)}</div>`;
+    case 'shot': return `<div class="shot">#${e.unitId} fired projectile ${e.projectileId} ${e.dir} from ${e.from}</div>`;
+    case 'projectileMoved': return `<div class="shot">projectile ${e.projectileId} ${e.path.map((p) => p.join(',')).join(' → ')}</div>`;
+    case 'projectileExpired': return `<div class="meta">projectile ${e.projectileId} left the grid @t=${e.time}</div>`;
+    case 'killed': return `<div class="killed">#${e.unitId} KILLED at ${e.at} by projectile ${e.by.join(', ')} (#${e.shooterId}) @t=${e.time}</div>`;
     default: return `<div class="meta">${e.type} ${JSON.stringify(e)}</div>`;
   }
 }

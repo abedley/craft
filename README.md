@@ -20,8 +20,9 @@ To try it on a phone, serve on your LAN and open `http://<your-ip>:8000`.
 index.html            debug UI shell
 css/style.css         mobile-first styles (safe areas, 44px touch targets)
 src/engine/           deterministic game engine (no DOM)
-  game.js             Game state, order queue, tick()
-  orders.js           order constructors + validation (move(x, y))
+  game.js             Game state, order queue, tick(), projectiles
+  unitTypes.js        unit type registry (movement + attack abilities)
+  orders.js           order constructors + validation (move, shoot)
   resolve.js          simultaneous move / collision resolution
 src/ui/               canvas renderer + debug controls
 src/scenarios.js      preset boards that exercise collision rules
@@ -31,16 +32,20 @@ test/                 node:test suites for the engine
 ## Engine model
 
 - The world is a `width x height` grid of cells; each cell holds at most one unit.
-- During a turn the player queues orders (`game.queueOrder(unitId, move(x, y))`).
-  Nothing changes until `game.tick()`.
+- Every unit has a **type** (`src/engine/unitTypes.js`) that defines its speed, which orders it
+  accepts, and what it fires. Ordering a unit to do something its type can't do throws.
+- During a turn the player queues orders (`game.queueOrder(unitId, move(x, y))`,
+  `game.queueOrder(unitId, shoot('right'))`). Nothing changes until `game.tick()`.
+  If a unit gets several orders in one turn, only the last is carried out.
 - `tick()`:
-  1. applies queued orders in queue order (a later order for the same unit replaces an earlier one),
+  1. applies queued orders in queue order (`shoot` fires immediately, see *Combat*),
   2. moves units in timed **sub-steps** (see *Speed* below); at each sub-step every unit
      due to step picks one orthogonal step toward its target (larger axis gap first,
      x on ties; no pathfinding yet) and those steps are resolved **simultaneously**,
   3. units that reached their target drop their order.
   It returns an event list (`orderApplied`, `moved` with the full `path`, `blocked` with the
-  sub-step `time` it first happened, `arrived`).
+  sub-step `time` it first happened, `arrived`, `shot`, `projectileMoved`, `killed`,
+  `projectileExpired`).
 - Move orders persist across ticks until the unit arrives or gets a new order.
   A blocked unit simply tries again next tick.
 
@@ -60,6 +65,31 @@ single-step collision rules below, while everyone else stands still and holds th
 - No unit can jump over or pass through another; a fast unit stuck behind a slow one moves at the
   slow one's pace.
 - A blocked unit retries at its own next step time within the same tick.
+
+### Unit types
+
+| Type | Speed | Orders | Notes |
+| --- | --- | --- | --- |
+| `basic` | 1 | move | default type |
+| `gunslinger` | 1 | move, shoot | projectile speed 4 |
+
+`new Game({ units: [{ x, y, type: 'gunslinger' }] })` or `game.addUnit(x, y, id, { type })`. A unit's
+speed starts at its type's speed; `speed` / `setSpeed` override it (for debugging and tests).
+
+### Combat
+
+- `shoot(dir)` with `dir` one of `up`, `down`, `left`, `right`. The projectile spawns in the shooter's
+  cell at the start of the tick. Shooting cancels the shooter's move order, and the shooter stays put
+  that tick.
+- Projectiles are on the same sub-step timeline as units (a speed-4 projectile steps at
+  t = ¼, ½, ¾, 1). They fly straight, never steer, are never blocked, don't block units, and keep
+  going across ticks until they hit something or leave the grid (unlimited range).
+- At each instant, after units and projectiles have stepped, a projectile **hits** a unit if they
+  share a cell (except a projectile still sitting in its shooter's cell), or if they passed
+  through each other that instant. The unit is **killed and removed immediately**, freeing its cell for
+  the rest of the tick, and the projectile is used up. Only the first unit in the line is hit.
+- Same instant means same outcome for everyone: two gunslingers shooting each other both die.
+  Projectiles don't collide with each other.
 
 ### Collision rules (`src/engine/resolve.js`)
 
@@ -83,12 +113,16 @@ UI header, so two runs with the same orders can be compared at a glance.
 
 ## Debug UI
 
-- **Order** mode: tap a unit to select it, tap an empty cell to queue `move(x, y)`.
-- **Add unit** / **Remove** modes edit the board.
-- **Speed** sets the selected unit's speed, or the speed for newly added units when none is selected.
+- **Move** mode: tap a unit to select it, tap an empty cell to queue `move(x, y)`.
+- **Shoot** mode: tap a gunslinger, then tap any cell or unit to shoot toward it (dominant axis).
+- **Add** / **Remove** modes edit the board. The type picker sets the type of added units.
+  Gunslingers are drawn as diamonds, basic units as circles.
+- **Spd** sets the selected unit's speed, or the speed for newly added units when none is selected.
   Units faster than 1 show their speed in a small badge.
+- Projectiles are orange dots with a tail. Queued shots show as a dotted orange ray.
 - **Tick** steps once, **Back** restores the pre-tick snapshot, **Auto** ticks until all units are idle.
-- **Preview** draws green arrows along next tick's full paths and dashed red rings on units that will be blocked.
+- **Preview** draws green arrows along next tick's full unit paths, orange arrows for projectiles,
+  a red X on units that will be killed, and dashed red rings on units that will be blocked.
 - **Scenario** loads preset collision cases.
 - Tabs: queued orders, per-tick event log, unit list, and raw state JSON (copy / edit / load).
 - `window.debug.game` is available in the browser console.
