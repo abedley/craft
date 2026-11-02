@@ -24,10 +24,40 @@ src/engine/           deterministic game engine (no DOM)
   unitTypes.js        unit type registry (movement + attack abilities)
   orders.js           order constructors + validation (move, shoot)
   resolve.js          simultaneous move / collision resolution
+src/match.js          turn structure: CPU stages orders, player orders, end turn
+src/ai/cpu.js         deterministic CPU opponent
 src/ui/               canvas renderer + debug controls
 src/scenarios.js      preset boards that exercise collision rules
 test/                 node:test suites for the engine
 ```
+
+## Turns and teams
+
+The game is played by two teams: the player (blue) and the CPU (pink). Every unit has a `team`
+(`'player'` default, or `'cpu'`). **Friendly fire is on**: projectiles hit whatever unit is in their way.
+
+Each turn (`src/match.js`):
+
+1. **The CPU stages all of its orders first** (`match.startTurn()`), looking only at the board as it
+   stands. Its orders go to the front of the queue, so under the "first ordered wins" rule the CPU wins
+   same-instant ties for a cell.
+2. The player stages orders for their own units (`match.playerOrder()`); the CPU's plan is fixed.
+   The player cannot order CPU units.
+3. **End turn** (`match.endTurn()`) runs one tick, then the CPU stages the next turn.
+
+`match.status` is `playing`, `won` (no CPU units left), `lost` (no player units left) or `draw` (both
+wiped out in the same tick). Boards with no CPU units are sandboxes and never end.
+
+### CPU (`src/ai/cpu.js`)
+
+Deterministic: same board, same plan. For each CPU unit in id order:
+
+1. **Dodge** an incoming projectile that would reach it within two ticks with nothing in between, if
+   it can still step out of the line in time.
+2. **Shoot** (gunslingers) if the first unit in some direction is an enemy, nearest first. It never
+   shoots when a teammate is first in line.
+3. **Move**: gunslingers head for the nearest free cell with a clear straight shot at an enemy;
+   everyone else walks toward the nearest enemy.
 
 ## Engine model
 
@@ -113,14 +143,20 @@ UI header, so two runs with the same orders can be compared at a glance.
 
 ## Debug UI
 
-- **Move** mode: tap a unit to select it, tap an empty cell to queue `move(x, y)`.
+- Starts on **Skirmish vs CPU**. CPU orders are already staged when your turn starts (pink dashed
+  lines, listed first in the Queue tab); tap **End turn** when your orders are in. The header shows
+  YOU WIN / YOU LOSE / DRAW when a side is wiped out.
+- **Move** mode: tap one of your units to select it, tap an empty cell to queue `move(x, y)`.
 - **Shoot** mode: tap a gunslinger, then tap any cell or unit to shoot toward it (dominant axis).
-- **Add** / **Remove** modes edit the board. The type picker sets the type of added units.
+- **Add** / **Remove** modes edit the board (the CPU re-plans after edits). The type and team pickers
+  set what gets added.
   Gunslingers are drawn as diamonds, basic units as circles.
-- **Spd** sets the selected unit's speed, or the speed for newly added units when none is selected.
+- **Speed** sets the selected unit's speed, or the speed for newly added units when none is selected.
   Units faster than 1 show their speed in a small badge.
 - Projectiles are orange dots with a tail. Queued shots show as a dotted orange ray.
-- **Tick** steps once, **Back** restores the pre-tick snapshot, **Auto** ticks until all units are idle.
+- **End turn** resolves the turn, **Back** restores the state just before the last End turn (both sides'
+  orders included), **Auto** ends turns until the match is over or everything is idle.
+- **Clear** removes your queued orders (the CPU's stay).
 - **Preview** draws green arrows along next tick's full unit paths, orange arrows for projectiles,
   a red X on units that will be killed, and dashed red rings on units that will be blocked.
 - **Scenario** loads preset collision cases.

@@ -13,7 +13,8 @@
 <body>
   <main id="app">
     <header class="status">
-      <span>Tick <b id="tick">0</b></span>
+      <span>Turn <b id="tick">0</b></span>
+      <b id="status" class="outcome"></b>
       <span>Queue <b id="queue-count">0</b></span>
       <span class="hash">#<b id="hash">--------</b></span>
     </header>
@@ -31,15 +32,15 @@
       <button data-mode="remove">Remove</button>
     </div>
 
-    <div class="row speed-row">
+    <div class="row">
       <select id="unit-type" aria-label="Type for new units"></select>
-      <span class="label">Spd</span>
-      <div class="segmented" id="speed" aria-label="Unit speed"></div>
+      <select id="unit-team" aria-label="Team for new units"></select>
+      <select id="speed" aria-label="Unit speed"></select>
     </div>
 
     <div class="row">
-      <button id="btn-back" title="Undo last tick">&#9664; Back</button>
-      <button id="btn-tick" class="primary">Tick &#9654;</button>
+      <button id="btn-back" title="Undo last turn">&#9664; Back</button>
+      <button id="btn-tick" class="primary">End turn &#9654;</button>
       <button id="btn-auto" title="Tick automatically">Auto</button>
     </div>
 

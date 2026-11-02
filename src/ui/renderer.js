@@ -16,7 +16,8 @@ const COLORS = {
   label: '#0d1014',
 };
 
-export const unitColor = (id) => `hsl(${(id * 67) % 360} 65% 60%)`;
+export const TEAM_COLORS = { player: '#4da3ff', cpu: '#e8619f' };
+export const unitColor = (u) => TEAM_COLORS[u.team] ?? '#aaaaaa';
 
 export class Renderer {
   constructor(canvas) {
@@ -91,7 +92,8 @@ export class Renderer {
       const order = pending ?? u.order;
       if (!order) continue;
       if (order.type === 'move') {
-        this.drawOrderLine(u, order, pending ? COLORS.queuedOrder : COLORS.activeOrder, !!pending);
+        const color = !pending ? COLORS.activeOrder : u.team === 'cpu' ? TEAM_COLORS.cpu : COLORS.queuedOrder;
+        this.drawOrderLine(u, order, color, !!pending);
       } else if (order.type === 'shoot') {
         this.drawShotLine(game, u, order.dir);
       }
@@ -110,7 +112,7 @@ export class Renderer {
     ctx.font = `600 ${Math.round(cell * 0.32)}px -apple-system, system-ui, sans-serif`;
     for (const u of game.units) {
       const [cx, cy] = this.center(u.x, u.y);
-      ctx.fillStyle = unitColor(u.id);
+      ctx.fillStyle = unitColor(u);
       ctx.beginPath();
       if (u.type === 'gunslinger') {
         // Gunslingers are diamonds so they read differently from basic units.

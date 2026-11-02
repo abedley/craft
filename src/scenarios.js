@@ -1,11 +1,29 @@
-// Preset boards for exercising the engine from the debug UI. Each one sets
-// up units and queues orders so pressing Tick shows a specific collision rule.
+// Preset boards for the debug UI. The first ones are player-vs-CPU matches;
+// the rest are rule demos where every unit is on the player's team and
+// orders are pre-queued so pressing End turn shows a specific rule.
 
 import { Game, move, shoot } from './engine/index.js';
 
 const SIZE = 8;
 
+const P = 'player';
+const C = 'cpu';
+const GS = 'gunslinger';
+
 export const scenarios = {
+  'Skirmish vs CPU': () => new Game({
+    width: SIZE, height: SIZE,
+    units: [
+      { x: 1, y: 7, type: GS, team: P }, { x: 3, y: 7, team: P }, { x: 4, y: 7, team: P }, { x: 6, y: 7, type: GS, team: P },
+      { x: 1, y: 0, type: GS, team: C }, { x: 3, y: 0, team: C }, { x: 4, y: 0, team: C }, { x: 6, y: 0, type: GS, team: C },
+    ],
+  }),
+
+  'Duel vs CPU': () => new Game({
+    width: SIZE, height: SIZE,
+    units: [{ x: 0, y: 7, type: GS, team: P }, { x: 7, y: 0, type: GS, team: C }],
+  }),
+
   'Empty 8x8': () => new Game({ width: SIZE, height: SIZE }),
 
   'Sandbox': () => new Game({

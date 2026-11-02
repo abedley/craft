@@ -11,10 +11,15 @@
 //   Speed        - with a unit selected, sets that unit's speed (cells per
 //                  tick); otherwise sets the speed used for new units.
 //   Remove mode  - tap a unit to delete it.
-// "Tick" runs one engine step. "Back" restores the snapshot before the last
-// tick (the engine is deterministic, so this is an exact undo).
+//
+// Turns: the CPU stages its orders as soon as a turn starts (they show up in
+// the queue first). The player then orders their own (blue) units and taps
+// "End turn", which runs one tick and starts the next turn. Editing the board
+// makes the CPU re-plan. "Back" restores the snapshot taken just before the
+// last "End turn", including both sides' staged orders (an exact undo).
 
-import { Game, MAX_SPEED, move, shoot, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
+import { Game, Teams, MAX_SPEED, move, shoot, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
+import { Match, MatchStatus } from '../match.js';
 import { Renderer } from './renderer.js';
 import { scenarios } from '../scenarios.js';
 
@@ -32,12 +37,14 @@ export class DebugUI {
     this.tab = 'queue';
     this.newUnitType = DEFAULT_UNIT_TYPE;
     this.newUnitSpeed = UnitTypes[DEFAULT_UNIT_TYPE].speed;
+    this.newUnitTeam = Teams.PLAYER;
 
     this.populateScenarios();
     this.populateSpeeds();
     this.populateTypes();
+    this.populateTeams();
     this.bind();
-    this.loadScenario(Object.keys(scenarios)[1]);
+    this.loadScenario(Object.keys(scenarios)[0]);
     this.renderer.resize(this.game);
     this.render();
   }
@@ -55,14 +62,42 @@ export class DebugUI {
   }
 
   populateSpeeds() {
-    const wrap = $('#speed');
+    const sel = $('#speed');
     for (let v = 1; v <= MAX_SPEED; v++) {
-      const btn = document.createElement('button');
-      btn.textContent = String(v);
-      btn.dataset.speed = String(v);
-      btn.addEventListener('click', () => this.onSpeedTap(v));
-      wrap.append(btn);
+      const opt = document.createElement('option');
+      opt.value = String(v);
+      opt.textContent = `Speed ${v}`;
+      sel.append(opt);
     }
+    sel.addEventListener('change', () => this.onSpeedTap(Number(sel.value)));
+  }
+
+  populateTeams() {
+    const sel = $('#unit-team');
+    for (const [value, label] of [[Teams.PLAYER, 'You'], [Teams.CPU, 'CPU']]) {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = label;
+      sel.append(opt);
+    }
+    sel.addEventListener('change', () => {
+      this.newUnitTeam = sel.value;
+      if (this.mode !== 'add') this.setMode('add');
+      this.hint(`New units join ${sel.value === Teams.CPU ? 'the CPU' : 'your team'}. Tap an empty cell.`);
+    });
+  }
+
+  /** Swap in a (new or restored) game and wrap it in a match. */
+  setGame(game, vsCpu) {
+    this.game = game;
+    this.match = new Match(game, { vsCpu });
+  }
+
+  /** After a board edit, throw away the CPU's plan and let it plan again. */
+  replanCpu() {
+    this.game.clearQueue(Teams.CPU);
+    this.match.vsCpu ||= this.game.units.some((u) => u.team === Teams.CPU);
+    this.match.startTurn();
   }
 
   populateTypes() {
@@ -86,6 +121,7 @@ export class DebugUI {
   onSpeedTap(v) {
     if (this.selectedId !== null) {
       this.game.setSpeed(this.selectedId, v);
+      this.replanCpu();
       this.hint(`Unit ${this.selectedId} speed set to ${v}.`);
     } else {
       this.newUnitSpeed = v;
@@ -112,7 +148,7 @@ export class DebugUI {
     $('#btn-back').addEventListener('click', () => this.back());
     $('#btn-auto').addEventListener('click', () => this.toggleAuto());
     $('#btn-clear').addEventListener('click', () => {
-      this.game.clearQueue();
+      this.match.clearPlayerOrders();
       this.render();
     });
     $('#chk-preview').addEventListener('change', () => this.render());
@@ -130,7 +166,8 @@ export class DebugUI {
 
   loadScenario(name) {
     this.stopAuto();
-    this.game = scenarios[name]();
+    this.setGame(scenarios[name]());
+    this.match.startTurn();
     $('#scenario').value = name;
     this.resetSession();
     this.hint(`Loaded "${name}".`);
@@ -173,12 +210,14 @@ export class DebugUI {
       switch (this.mode) {
         case 'add':
           if (unit) return this.hint(`Cell ${x},${y} is occupied.`, true);
-          this.game.addUnit(x, y, undefined, { type: this.newUnitType, speed: this.newUnitSpeed });
-          this.hint(`Added ${UnitTypes[this.newUnitType].name} at ${x},${y}.`);
+          this.game.addUnit(x, y, undefined, { type: this.newUnitType, team: this.newUnitTeam, speed: this.newUnitSpeed });
+          this.replanCpu();
+          this.hint(`Added ${this.newUnitTeam === Teams.CPU ? 'CPU' : 'your'} ${UnitTypes[this.newUnitType].name} at ${x},${y}.`);
           break;
         case 'remove':
           if (!unit) return;
           this.game.removeUnit(unit.id);
+          this.replanCpu();
           this.hint(`Removed unit ${unit.id}.`);
           break;
         case 'shoot': {
@@ -188,8 +227,11 @@ export class DebugUI {
             this.hint('Deselected.');
           } else if (sel && this.canShoot(sel)) {
             const dir = directionToward(sel, x, y);
-            this.game.queueOrder(sel.id, shoot(dir));
+            this.match.playerOrder(sel.id, shoot(dir));
             this.hint(`Queued: unit ${sel.id} shoot(${dir}).`);
+          } else if (unit && unit.team === Teams.CPU) {
+            this.hint(`Unit ${unit.id} is a CPU unit.`, true);
+            return;
           } else if (unit && this.canShoot(unit)) {
             this.selectedId = unit.id;
             this.hint(`Unit ${unit.id} selected. Tap a cell to shoot toward it.`);
@@ -204,11 +246,13 @@ export class DebugUI {
           if (unit && unit.id === this.selectedId) {
             this.selectedId = null;
             this.hint('Deselected.');
+          } else if (unit && unit.team === Teams.CPU) {
+            this.hint(`Unit ${unit.id} is a CPU unit${unit.order ? ` (${fmtOrder(unit.order)})` : ''}.`);
           } else if (unit) {
             this.selectedId = unit.id;
             this.hint(`Unit ${unit.id} selected. Tap a cell to move.`);
           } else if (this.selectedId !== null) {
-            this.game.queueOrder(this.selectedId, move(x, y));
+            this.match.playerOrder(this.selectedId, move(x, y));
             this.hint(`Queued: unit ${this.selectedId} move(${x}, ${y}).`);
           }
       }
@@ -225,12 +269,15 @@ export class DebugUI {
   tick() {
     const before = this.game.snapshot();
     const tick = this.game.tickCount;
-    const events = this.game.tick();
+    const events = this.match.endTurn();
     this.history.push({ snapshot: before });
     this.log.push({ tick, events });
     const count = (type) => events.filter((e) => e.type === type).length;
     const killed = count('killed');
-    this.hint(`Tick ${tick}: ${count('moved')} moved, ${count('blocked')} blocked${killed ? `, ${killed} killed` : ''}.`);
+    const status = this.match.status;
+    const outcome = { won: ' You win!', lost: ' You lose.', draw: ' Draw: both sides wiped out.' }[status] ?? '';
+    this.hint(`Turn ${tick}: ${count('moved')} moved, ${count('blocked')} blocked${killed ? `, ${killed} killed` : ''}.${outcome}`);
+    if (status !== MatchStatus.PLAYING) this.stopAuto();
     if (this.selectedId !== null && !this.game.getUnit(this.selectedId)) this.selectedId = null;
     this.render();
     return events;
@@ -240,7 +287,7 @@ export class DebugUI {
     const prev = this.history.pop();
     if (!prev) return;
     this.stopAuto();
-    this.game = Game.fromSnapshot(prev.snapshot);
+    this.setGame(Game.fromSnapshot(prev.snapshot), this.match.vsCpu);
     this.log.pop();
     if (this.selectedId !== null && !this.game.getUnit(this.selectedId)) this.selectedId = null;
     this.hint(`Rewound to tick ${this.game.tickCount}.`);
@@ -253,6 +300,7 @@ export class DebugUI {
     this.autoTimer = setInterval(() => {
       // Stop once nothing is left to do.
       const g = this.game;
+      if (this.match.status !== MatchStatus.PLAYING) return this.stopAuto();
       if (g.queue.length === 0 && g.projectiles.length === 0 && g.units.every((u) => !u.order)) {
         this.stopAuto();
         this.hint('Auto stopped: nothing moving.');
@@ -285,7 +333,8 @@ export class DebugUI {
     try {
       const snap = JSON.parse($('#state-json').value);
       this.stopAuto();
-      this.game = Game.fromSnapshot(snap);
+      this.setGame(Game.fromSnapshot(snap));
+      this.match.startTurn();
       this.resetSession();
       this.hint('State loaded.');
     } catch (err) {
@@ -321,12 +370,16 @@ export class DebugUI {
   render() {
     const g = this.game;
     $('#tick').textContent = g.tickCount;
+    const status = this.match.status;
+    $('#status').textContent = { playing: '', won: 'YOU WIN', lost: 'YOU LOSE', draw: 'DRAW' }[status];
+    $('#status').className = `outcome ${status}`;
+    $('#btn-tick').disabled = status !== MatchStatus.PLAYING;
     $('#queue-count').textContent = g.queue.length;
     $('#hash').textContent = g.hash();
     $('#btn-back').disabled = this.history.length === 0;
     const selected = this.selectedId !== null ? g.getUnit(this.selectedId) : null;
     const shownSpeed = selected ? selected.speed : this.newUnitSpeed;
-    document.querySelectorAll('[data-speed]').forEach((b) => b.classList.toggle('active', Number(b.dataset.speed) === shownSpeed));
+    $('#speed').value = String(shownSpeed);
     this.renderer.draw(g, { selectedId: this.selectedId, preview: this.computePreview() });
     this.renderPanel();
   }
@@ -337,7 +390,7 @@ export class DebugUI {
       case 'queue': {
         const el = $('#tab-queue');
         el.innerHTML = g.queue.length
-          ? g.queue.map((q, i) => `<div>${i + 1}. unit ${q.unitId} ${fmtOrder(q.order)}</div>`).join('')
+          ? g.queue.map((q, i) => `<div class="${teamClass(g.getUnit(q.unitId))}">${i + 1}. ${teamLabel(g.getUnit(q.unitId))} #${q.unitId} ${fmtOrder(q.order)}</div>`).join('')
           : '<div class="empty">Queue is empty. Orders run on the next tick.</div>';
         break;
       }
@@ -358,7 +411,7 @@ export class DebugUI {
         const el = $('#tab-units');
         const projLines = g.projectiles.map((p) => `<div class="shot">projectile ${p.id} @ ${p.x},${p.y} → ${p.dir} (from #${p.ownerId})</div>`).join('');
         el.innerHTML = projLines + (g.units.length
-          ? g.units.map((u) => `<div>#${u.id} ${UnitTypes[u.type].name} @ ${u.x},${u.y} spd ${u.speed} ${u.order ? fmtOrder(u.order) : '<span class="meta">idle</span>'}</div>`).join('')
+          ? g.units.map((u) => `<div class="${teamClass(u)}">${teamLabel(u)} #${u.id} ${UnitTypes[u.type].name} @ ${u.x},${u.y} spd ${u.speed} ${u.order ? fmtOrder(u.order) : '<span class="meta">idle</span>'}</div>`).join('')
           : '<div class="empty">No units.</div>');
         break;
       }
@@ -369,6 +422,14 @@ export class DebugUI {
       }
     }
   }
+}
+
+function teamLabel(u) {
+  return u?.team === Teams.CPU ? 'CPU' : 'You';
+}
+
+function teamClass(u) {
+  return u?.team === Teams.CPU ? 'team-cpu' : 'team-player';
 }
 
 function fmtOrder(o) {
@@ -394,7 +455,7 @@ function fmtEvent(e) {
     case 'shot': return `<div class="shot">#${e.unitId} fired projectile ${e.projectileId} ${e.dir} from ${e.from}</div>`;
     case 'projectileMoved': return `<div class="shot">projectile ${e.projectileId} ${e.path.map((p) => p.join(',')).join(' → ')}</div>`;
     case 'projectileExpired': return `<div class="meta">projectile ${e.projectileId} left the grid @t=${e.time}</div>`;
-    case 'killed': return `<div class="killed">#${e.unitId} KILLED at ${e.at} by projectile ${e.by.join(', ')} (#${e.shooterId}) @t=${e.time}</div>`;
+    case 'killed': return `<div class="killed">${e.team === Teams.CPU ? 'CPU' : 'Your'} #${e.unitId} KILLED at ${e.at} by projectile ${e.by.join(', ')} (#${e.shooterId}) @t=${e.time}</div>`;
     default: return `<div class="meta">${e.type} ${JSON.stringify(e)}</div>`;
   }
 }

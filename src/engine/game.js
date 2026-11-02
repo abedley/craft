@@ -10,13 +10,16 @@ import { validateOrder, OrderType, Directions } from './orders.js';
 import { resolveMoves } from './resolve.js';
 import { getUnitType, DEFAULT_UNIT_TYPE } from './unitTypes.js';
 
+/** Sides. Friendly fire is on: projectiles hit any unit regardless of team. */
+export const Teams = Object.freeze({ PLAYER: 'player', CPU: 'cpu' });
+
 /** Fastest allowed unit speed, in cells per tick. */
 export const MAX_SPEED = 6;
 
 export class Game {
   /**
    * @param {{width:number,height:number,
-   *          units?:Array<{x:number,y:number,id?:number,type?:string,speed?:number}>}} opts
+   *          units?:Array<{x:number,y:number,id?:number,type?:string,team?:string,speed?:number}>}} opts
    */
   constructor({ width, height, units = [] }) {
     if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
@@ -33,7 +36,7 @@ export class Game {
       projectiles: [], // kept sorted by id
       queue: [], // [{ unitId, order }]
     };
-    for (const u of units) this.addUnit(u.x, u.y, u.id, { type: u.type, speed: u.speed });
+    for (const u of units) this.addUnit(u.x, u.y, u.id, { type: u.type, team: u.team, speed: u.speed });
   }
 
   // ---- snapshots ---------------------------------------------------------
@@ -48,6 +51,7 @@ export class Game {
     for (const u of game.state.units) {
       u.orderSeq ??= null;
       u.type ??= DEFAULT_UNIT_TYPE;
+      u.team ??= Teams.PLAYER;
       u.speed ??= getUnitType(u.type).speed;
     }
     return game;
@@ -88,22 +92,24 @@ export class Game {
    * @param {number} x
    * @param {number} y
    * @param {number} [id] defaults to the next free id
-   * @param {{type?:string, speed?:number}} [opts]
+   * @param {{type?:string, team?:string, speed?:number}} [opts]
    *   type: key of UnitTypes (default "basic").
+   *   team: Teams.PLAYER (default) or Teams.CPU.
    *   speed: cells per tick; defaults to the type's speed. Overriding it is
    *   meant for debugging/tests.
    */
-  addUnit(x, y, id, { type = DEFAULT_UNIT_TYPE, speed } = {}) {
+  addUnit(x, y, id, { type = DEFAULT_UNIT_TYPE, team = Teams.PLAYER, speed } = {}) {
     if (!this.inBounds(x, y)) throw new Error(`Cell ${x},${y} is out of bounds`);
     const def = getUnitType(type);
     speed ??= def.speed;
     validateSpeed(speed);
+    if (!Object.values(Teams).includes(team)) throw new Error(`Unknown team "${team}"`);
     if (this.unitAt(x, y)) throw new Error(`Cell ${x},${y} is occupied`);
     const unitId = id ?? this.state.nextUnitId;
     if (this.getUnit(unitId)) throw new Error(`Unit id ${unitId} already exists`);
     this.state.nextUnitId = Math.max(this.state.nextUnitId, unitId + 1);
     // orderSeq: when the current order was applied (lower = given earlier).
-    const unit = { id: unitId, type, x, y, speed, order: null, orderSeq: null };
+    const unit = { id: unitId, team, type, x, y, speed, order: null, orderSeq: null };
     this.state.units.push(unit);
     this.state.units.sort((a, b) => a.id - b.id);
     return unit;
@@ -135,8 +141,11 @@ export class Game {
     this.state.queue.push({ unitId, order: structuredClone(order) });
   }
 
-  clearQueue() {
-    this.state.queue = [];
+  /** Remove queued orders; with a team, only that team's orders. */
+  clearQueue(team = null) {
+    this.state.queue = team === null
+      ? []
+      : this.state.queue.filter((q) => this.getUnit(q.unitId)?.team !== team);
   }
 
   // ---- simulation --------------------------------------------------------
@@ -278,7 +287,7 @@ export class Game {
       for (const [unitId, by] of [...killed].sort((a, b) => a[0] - b[0])) {
         const u = this.getUnit(unitId);
         const p = s.projectiles.find((q) => q.id === by[0]);
-        events.push({ type: 'killed', unitId, at: [u.x, u.y], by, shooterId: p.ownerId, time });
+        events.push({ type: 'killed', unitId, team: u.team, at: [u.x, u.y], by, shooterId: p.ownerId, time });
       }
       const spent = new Set(hits.map(([p]) => p.id));
       s.units = s.units.filter((u) => !killed.has(u.id));

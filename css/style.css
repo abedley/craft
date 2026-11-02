@@ -84,11 +84,10 @@ button.on { border-color: var(--ok); color: var(--ok); }
 .segmented button:last-child { border-radius: 0 8px 8px 0; }
 .segmented button.active { background: var(--line); border-color: var(--accent); }
 
-.speed-row { gap: 10px; }
-.speed-row .label { flex: 0 0 auto; color: var(--muted); }
-.speed-row select { flex: 0 0 38%; }
-.speed-row .segmented { display: flex; flex: 1; }
-.speed-row .segmented button { flex: 1; min-width: 0; padding: 0; }
+.outcome { letter-spacing: 0.05em; }
+.outcome.won { color: var(--ok); }
+.outcome.lost { color: var(--warn); }
+.outcome.draw { color: var(--muted); }
 
 .toggle { display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--muted); }
 .toggle input { width: 20px; height: 20px; }
@@ -123,6 +122,8 @@ button.on { border-color: var(--ok); color: var(--ok); }
 .tab-body .killed { color: var(--warn); font-weight: 700; }
 .tab-body .shot { color: #ffa94d; }
 .tab-body .meta { color: var(--muted); }
+.tab-body .team-player { color: #8cc4ff; }
+.tab-body .team-cpu { color: #f08cbd; }
 
 #tab-state { display: flex; flex-direction: column; gap: 8px; }
 #tab-state[hidden] { display: none; }
