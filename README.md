@@ -1,6 +1,6 @@
 # Craft
 
-A single-player, turn-based grid game for the mobile browser (built for an
+A single-player, turn-based hex-grid game for the mobile browser (built for an
 iPhone 13 Pro held vertically), hosted on GitHub Pages.
 
 No build step: plain ES modules served as static files.
@@ -21,10 +21,11 @@ index.html            debug UI shell
 css/style.css         mobile-first styles (safe areas, 44px touch targets)
 src/engine/           deterministic game engine (no DOM)
   game.js             Game state, order queue, tick(), projectiles
+  hex.js              hex grid geometry (directions, distance, lines)
   unitTypes.js        loads + validates unit definitions from JSON
-src/data/units.json   unit definitions (add new units here)
   orders.js           order constructors + validation (move, attack)
   resolve.js          simultaneous move / collision resolution
+src/data/units.json   unit definitions (add new units here)
 src/match.js          turn structure: CPU stages orders, player orders, end turn
 src/ai/cpu.js         deterministic CPU opponent
 src/ui/               canvas renderer + debug controls
@@ -69,19 +70,32 @@ Deterministic: same board, same plan. For each CPU unit in id order:
 
 All of this reads from the unit definitions, so JSON-only units are played sensibly too.
 
+## Hex grid
+
+The board is a rectangle of **flat-topped hexes** (`src/engine/hex.js`), default 8 × 8. Positions are
+`(x, y)` = (column, row), and odd columns sit half a hex lower ("odd-q" layout). Each hex has six
+neighbours and six directions: `up`, `up-right`, `down-right`, `down`, `down-left`, `up-left`. There is
+no straight left/right. Straight lines run through opposite sides, so a **column is a straight
+up/down line**, which suits teams facing each other from the top and bottom of a portrait phone.
+
+Distances are hex steps. Internally the geometry uses axial coordinates; `step`, `distance`,
+`neighbors` and `hexLineStep` are exported for other code. Saved states are tagged `grid: 'hex'`, and
+square-grid saves from earlier versions are rejected with a clear error.
+
 ## Engine model
 
-- The world is a `width x height` grid of cells; each cell holds at most one unit.
+- The world is a `width x height` hex grid; each hex holds at most one unit.
 - Every unit has a **type** (`src/engine/unitTypes.js`) that defines its speed, which orders it
   accepts, and what it fires. Ordering a unit to do something its type can't do throws.
 - During a turn the player queues orders (`game.queueOrder(unitId, move(x, y))`,
-  `game.queueOrder(unitId, attack('right'))`). Nothing changes until `game.tick()`.
+  `game.queueOrder(unitId, attack('down'))`). Nothing changes until `game.tick()`.
   If a unit gets several orders in one turn, only the last is carried out.
 - `tick()`:
   1. applies queued orders in queue order (see *Combat* for `attack`),
   2. moves units in timed **sub-steps** (see *Speed* below); at each sub-step every unit
-     due to step picks one orthogonal step toward its target (larger axis gap first,
-     x on ties; no pathfinding yet) and those steps are resolved **simultaneously**,
+     due to step moves one hex toward its target along a straight hex line (always a shortest
+     path, never off the board; no pathfinding around units yet) and those steps are resolved
+     **simultaneously**,
   3. units that reached their target drop their order.
   It returns an event list (`orderApplied`, `moved` with the full `path`, `blocked` with the
   sub-step `time` it first happened, `arrived`, `shot`, `strike`, `projectileMoved`, `killed`,
@@ -115,7 +129,6 @@ error messages that name the unit and field.
 ```json
 {
   "default": "pikeman",
-  "renamed": { "basic": "pikeman" },
   "units": {
     "pikeman": {
       "name": "Pikeman", "speed": 1, "shape": "circle",
@@ -123,7 +136,7 @@ error messages that name the unit and field.
     },
     "gunslinger": {
       "name": "Gunslinger", "speed": 1, "shape": "diamond",
-      "attack": { "kind": "projectile", "speed": 4, "directions": "orthogonal" }
+      "attack": { "kind": "projectile", "speed": 4, "directions": "all" }
     }
   }
 }
@@ -136,19 +149,19 @@ error messages that name the unit and field.
 | `shape` | `circle` (default), `diamond`, `square`, `triangle` |
 | `attack` | leave it out for a unit that can't attack |
 | `attack.kind` | `melee` or `projectile` |
-| `attack.directions` | `all` (8), `orthogonal`, `diagonal`, or a list like `["up", "down-left"]` |
-| `attack.reach` | melee: how many cells in a row it strikes |
+| `attack.directions` | `all` (the 6 hex directions), `vertical` (up/down), or a list like `["up", "down-left"]` |
+| `attack.reach` | melee: how many hexes in a row it strikes |
 | `attack.speed` | projectile: cells per tick, 1–6 |
 | `attack.range` | projectile: max cells travelled; leave it out for unlimited |
 | `default` | type used when a unit doesn't name one |
-| `renamed` | old type keys mapped to current ones, so old saves still load |
+| `renamed` | optional: old type keys mapped to current ones, so old saves still load |
 
-Example: a range-limited diagonal archer, which needs no code:
+Example: a range-limited archer that only shoots along one diagonal line, which needs no code:
 
 ```json
 "archer": {
   "name": "Archer", "speed": 1, "shape": "triangle",
-  "attack": { "kind": "projectile", "speed": 2, "range": 3, "directions": "diagonal" }
+  "attack": { "kind": "projectile", "speed": 2, "range": 3, "directions": ["down-right", "up-left"] }
 }
 ```
 
@@ -160,13 +173,13 @@ A unit's speed starts at its type's speed; `speed` / `setSpeed` override it for 
 
 ### Combat
 
-Every attacking unit uses the same order, `attack(dir)` (`dir`: `up`, `down`, `left`, `right`,
-`up-left`, `up-right`, `down-left`, `down-right`, limited to what the type allows). The unit holds
+Every attacking unit uses the same order, `attack(dir)` (`dir`: one of the 6 hex directions,
+limited to what the type allows). The unit holds
 still that tick and any move order is cancelled. What happens depends on its `attack.kind`.
 
 **Melee** (pikeman):
 
-- Strikes at the **end of the tick** (t = 1). Every unit in the `reach` cells in a row next to it
+- Strikes at the **end of the tick** (t = 1). Every unit in the `reach` hexes in a straight line next to it
   in that direction dies, teammates included.
 - Because it lands at the end, a unit that steps out of the zone during the tick escapes, and a unit
   that walks into it is hit. Combined with the visible CPU plan, you can dodge a CPU strike or aim yours

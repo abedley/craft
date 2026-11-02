@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Game, Teams, move, attack } from '../src/engine/index.js';
+import { Game, Teams, move, attack, nextStep, distance, ALL_DIRECTIONS } from '../src/engine/index.js';
 import { Match, MatchStatus } from '../src/match.js';
-import { planTurn } from '../src/ai/cpu.js';
+import { planTurn, firstInLine } from '../src/ai/cpu.js';
 
 const P = Teams.PLAYER;
 const C = Teams.CPU;
@@ -17,8 +17,8 @@ test('units default to the player team; unknown teams are rejected', () => {
 });
 
 test('friendly fire: a projectile kills a teammate in its line', () => {
-  const g = new Game({ width: 6, height: 1, units: [{ x: 0, y: 0, type: G }, { x: 2, y: 0 }, { x: 4, y: 0, team: C }] });
-  g.queueOrder(1, attack('right'));
+  const g = new Game({ width: 1, height: 6, units: [{ x: 0, y: 0, type: G }, { x: 0, y: 2 }, { x: 0, y: 4, team: C }] });
+  g.queueOrder(1, attack('down'));
   const events = g.tick();
   const k = events.find((e) => e.type === 'killed');
   assert.deepEqual([k.unitId, k.team], [2, P]);
@@ -54,88 +54,98 @@ test('clearing player orders keeps the CPU plan', () => {
 });
 
 test('CPU wins a same-instant contest because it ordered first', () => {
-  // The CPU gunslinger has no shot yet; its nearest firing cell is (2,1).
-  // The player's pikeman steps into (2,1) at the same instant.
-  const g = new Game({ width: 3, height: 3, units: [{ x: 1, y: 1 }, { x: 2, y: 2, type: G, team: C }] });
+  // The CPU pikeman is out of reach and walks toward the player's unit; the
+  // player steps into the same hex at the same instant.
+  const g = new Game({ width: 3, height: 5, units: [{ x: 0, y: 2 }, { x: 1, y: 0, team: C }] });
   const m = new Match(g);
   m.startTurn();
-  assert.deepEqual(g.queue[0], { unitId: 2, order: move(2, 1) });
-  m.playerOrder(1, move(2, 1));
+  const [{ order }] = g.queue;
+  assert.equal(order.type, 'move');
+  const cell = nextStep({ ...g.getUnit(2), order }, g);
+  m.playerOrder(1, move(cell.x, cell.y));
   m.endTurn();
-  assert.deepEqual([g.getUnit(2).x, g.getUnit(2).y], [2, 1]);
-  assert.deepEqual([g.getUnit(1).x, g.getUnit(1).y], [1, 1]);
+  assert.deepEqual([g.getUnit(2).x, g.getUnit(2).y], [cell.x, cell.y]);
+  assert.deepEqual([g.getUnit(1).x, g.getUnit(1).y], [0, 2]);
 });
 
 test('CPU gunslinger shoots an enemy in line, but not through a teammate', () => {
+  // Nearer enemy at (3,1) on the down-right line is screened by a teammate at
+  // (1,0); the enemy straight down the column at (0,5) is clear.
   const g = new Game({
     width: 8, height: 8,
-    units: [{ x: 0, y: 0, type: G, team: C }, { x: 5, y: 0 }, { x: 0, y: 2, team: C }, { x: 0, y: 6 }],
+    units: [{ x: 0, y: 0, type: G, team: C }, { x: 1, y: 0, team: C }, { x: 3, y: 1 }, { x: 0, y: 5 }],
   });
   const plan = planTurn(g, C);
-  assert.deepEqual(plan.find(([id]) => id === 1)[1], attack('right'));
+  assert.deepEqual(plan.find(([id]) => id === 1)[1], attack('down'));
 });
 
-test('CPU gunslinger blocked by a teammate moves to a clear firing cell', () => {
-  // Teammate at (3,0) blocks the row. Cells with a clear line to the enemy
-  // at (6,0) include (4,0) (4 steps away) and (6,1) (7 steps): nearest wins.
-  const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: G, team: C }, { x: 3, y: 0, team: C }, { x: 6, y: 0 }] });
+test('CPU gunslinger blocked by a teammate moves to the nearest clear firing cell', () => {
+  // Teammate at (0,3) screens the column. Clear cells below it, such as
+  // (0,4) (4 steps), have a straight shot at the enemy at (0,6).
+  const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: G, team: C }, { x: 0, y: 3, team: C }, { x: 0, y: 6 }] });
   const [, order] = planTurn(g, C).find(([id]) => id === 1);
-  assert.deepEqual(order, move(4, 0));
+  assert.deepEqual(order, move(0, 4));
 });
 
-test('CPU gunslinger walks to the nearest cell with a clear shot', () => {
-  const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: G, team: C }, { x: 2, y: 6 }] });
-  const [[, order]] = planTurn(g, C);
-  assert.deepEqual(order, move(2, 0)); // 2 steps to share a column vs 6 to share a row
-});
-
-test('CPU gunslinger does not pick a firing cell blocked by another unit', () => {
-  // Enemy at (2,6); (2,0) is nearest but a teammate at (2,3) blocks that column.
-  const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: G, team: C }, { x: 2, y: 3, team: C }, { x: 2, y: 6 }] });
-  const [, order] = planTurn(g, C).find(([id]) => id === 1);
-  assert.deepEqual(order, move(2, 4)); // first clear cell in the column, 6 steps; row cell (0,6) is also 6 -> lower y wins
+test('CPU gunslinger walks to a nearest cell with a clear shot', () => {
+  for (const [ex, ey] of [[4, 6], [6, 2], [3, 7], [7, 7]]) {
+    const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: G, team: C }, { x: ex, y: ey }] });
+    const [[, order]] = planTurn(g, C);
+    // Brute force: every cell with a clear straight line to the enemy.
+    let best = Infinity;
+    for (let x = 0; x < 8; x++) {
+      for (let y = 0; y < 8; y++) {
+        if ((x === ex && y === ey) || (x === 0 && y === 0)) continue;
+        const clear = ALL_DIRECTIONS.some((d) => firstInLine(g, x, y, d)?.unit.id === 2);
+        if (clear) best = Math.min(best, distance(0, 0, x, y));
+      }
+    }
+    assert.equal(order.type, 'move');
+    assert.ok(ALL_DIRECTIONS.some((d) => firstInLine(g, order.x, order.y, d)?.unit.id === 2), `(${order.x},${order.y}) has a shot`);
+    assert.equal(distance(0, 0, order.x, order.y), best);
+  }
 });
 
 test('CPU dodges an incoming projectile when it has time', () => {
-  const g = new Game({ width: 10, height: 3, units: [{ x: 0, y: 1, type: G }, { x: 7, y: 1, team: C }] });
-  g.queueOrder(1, attack('right'));
-  g.tick(); // projectile at x=4, 3 cells away: it arrives at t=3/4, before the
-  // unit could leave at t=1, so a dodge can't work and isn't tried.
-  assert.ok(!planTurn(g, C).some(([, o]) => o.type === 'move' && o.y !== 1));
+  const g = new Game({ width: 3, height: 10, units: [{ x: 1, y: 0, type: G }, { x: 1, y: 7, team: C }] });
+  g.queueOrder(1, attack('down'));
+  g.tick(); // projectile at (1,4), 3 cells away: it arrives at t=3/4, before
+  // the unit could leave at t=1, so a dodge can't work and isn't tried.
+  assert.ok(!planTurn(g, C).some(([, o]) => o.type === 'move' && o.x !== 1));
 
-  const g2 = new Game({ width: 14, height: 3, units: [{ x: 0, y: 1, type: G }, { x: 9, y: 1, team: C }] });
-  g2.queueOrder(1, attack('right'));
-  g2.tick(); // projectile at x=4, 5 away: reaches x=9 at t=5/4; unit leaves at t=1
+  const g2 = new Game({ width: 3, height: 14, units: [{ x: 1, y: 0, type: G }, { x: 1, y: 9, team: C }] });
+  g2.queueOrder(1, attack('down'));
+  g2.tick(); // projectile at (1,4), 5 away: reaches (1,9) at t=5/4; unit leaves at t=1
   const m = new Match(g2, { vsCpu: true });
   m.startTurn();
-  assert.deepEqual(g2.queue[0], { unitId: 2, order: move(9, 0) });
+  assert.deepEqual(g2.queue[0], { unitId: 2, order: move(2, 9) }); // up-right, off the line
   m.endTurn();
   m.endTurn();
   assert.ok(g2.getUnit(2), 'CPU unit survived');
 });
 
 test('match status: won, lost, draw', () => {
-  const won = new Match(new Game({ width: 5, height: 1, units: [{ x: 0, y: 0, type: G }, { x: 4, y: 0, team: C }] }));
+  const won = new Match(new Game({ width: 1, height: 5, units: [{ x: 0, y: 0, type: G }, { x: 0, y: 4, team: C }] }));
   won.startTurn();
-  won.playerOrder(1, attack('right'));
-  // The CPU pikeman walks toward us into our shot.
+  won.playerOrder(1, attack('down'));
+  // The CPU pikeman walks toward us and passes through our shot.
   won.endTurn();
   assert.equal(won.status, MatchStatus.WON);
-  assert.throws(() => won.playerOrder(1, move(1, 0)), /over/);
+  assert.throws(() => won.playerOrder(1, move(0, 1)), /over/);
 
-  const draw = new Match(new Game({ width: 5, height: 1, units: [{ x: 0, y: 0, type: G }, { x: 4, y: 0, type: G, team: C }] }));
-  draw.startTurn(); // CPU shoots left
-  draw.playerOrder(1, attack('right'));
+  const draw = new Match(new Game({ width: 1, height: 5, units: [{ x: 0, y: 0, type: G }, { x: 0, y: 4, type: G, team: C }] }));
+  draw.startTurn(); // CPU shoots up
+  draw.playerOrder(1, attack('down'));
   draw.endTurn();
   draw.endTurn();
   assert.equal(draw.status, MatchStatus.DRAW);
 
-  const lost = new Match(new Game({ width: 5, height: 1, units: [{ x: 0, y: 0 }, { x: 4, y: 0, type: G, team: C }] }));
+  const lost = new Match(new Game({ width: 1, height: 5, units: [{ x: 0, y: 0 }, { x: 0, y: 4, type: G, team: C }] }));
   lost.startTurn();
   lost.endTurn();
   assert.equal(lost.status, MatchStatus.LOST);
 
-  const sandbox = new Match(new Game({ width: 3, height: 1, units: [{ x: 0, y: 0 }] }));
+  const sandbox = new Match(new Game({ width: 1, height: 3, units: [{ x: 0, y: 0 }] }));
   assert.equal(sandbox.status, MatchStatus.PLAYING);
 });
 

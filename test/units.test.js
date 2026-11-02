@@ -6,7 +6,7 @@ import {
   Game, Teams, move, attack, UnitTypes, defineUnitType, registerUnitTypes, DEFAULT_UNIT_TYPE,
 } from '../src/engine/index.js';
 import { Match } from '../src/match.js';
-import { planTurn } from '../src/ai/cpu.js';
+import { planTurn, firstInLine } from '../src/ai/cpu.js';
 
 const kills = (events) => events.filter((e) => e.type === 'killed').map((e) => e.unitId);
 
@@ -40,42 +40,44 @@ test('a bad file does not change the registry', () => {
 });
 
 // A few new units, defined only in JSON, exercising each feature.
+// Hex lines used: a column (up/down), and the down-right line from (0,0):
+// (1,0), (2,1), (3,1), (4,2), (5,2), (6,3).
 registerUnitTypes({
   units: {
-    halberdier: { name: 'Halberdier', speed: 1, shape: 'square', attack: { kind: 'melee', reach: 3, directions: 'orthogonal' } },
-    archer: { name: 'Archer', speed: 1, shape: 'triangle', attack: { kind: 'projectile', speed: 2, range: 3, directions: 'diagonal' } },
+    halberdier: { name: 'Halberdier', speed: 1, shape: 'square', attack: { kind: 'melee', reach: 3, directions: 'vertical' } },
+    archer: { name: 'Archer', speed: 1, shape: 'triangle', attack: { kind: 'projectile', speed: 2, range: 3, directions: ['down-right', 'up-left'] } },
     scout: { name: 'Scout', speed: 3 },
   },
 });
 
 test('new JSON units work in the engine with no code changes', () => {
-  // Halberdier: reach 3, orthogonal only.
-  const g = new Game({ width: 5, height: 1, units: [{ x: 0, y: 0, type: 'halberdier' }, { x: 3, y: 0 }, { x: 4, y: 0 }] });
+  // Halberdier: reach 3, up/down only.
+  const g = new Game({ width: 1, height: 5, units: [{ x: 0, y: 0, type: 'halberdier' }, { x: 0, y: 3 }, { x: 0, y: 4 }] });
   assert.throws(() => g.queueOrder(1, attack('up-right')), /direction/);
-  g.queueOrder(1, attack('right'));
-  assert.deepEqual(kills(g.tick()), [2]); // (3,0) is within reach 3; (4,0) is not
+  g.queueOrder(1, attack('down'));
+  assert.deepEqual(kills(g.tick()), [2]); // (0,3) is within reach 3; (0,4) is not
 
   // Scout: speed 3 from the type, and it can't attack.
-  const s = new Game({ width: 6, height: 1, units: [{ x: 0, y: 0, type: 'scout' }] });
+  const s = new Game({ width: 1, height: 6, units: [{ x: 0, y: 0, type: 'scout' }] });
   assert.equal(s.getUnit(1).speed, 3);
-  assert.throws(() => s.queueOrder(1, attack('right')), /Scout units cannot attack/);
-  s.queueOrder(1, move(5, 0));
+  assert.throws(() => s.queueOrder(1, attack('down')), /Scout units cannot attack/);
+  s.queueOrder(1, move(0, 5));
   s.tick();
-  assert.equal(s.getUnit(1).x, 3);
+  assert.equal(s.getUnit(1).y, 3);
 });
 
-test('projectile range: an archer arrow stops after 3 cells', () => {
-  const g = new Game({ width: 6, height: 6, units: [{ x: 0, y: 0, type: 'archer' }, { x: 3, y: 3 }, { x: 4, y: 4 }] });
+test('projectile range: an archer arrow stops after 3 hexes', () => {
+  const g = new Game({ width: 6, height: 6, units: [{ x: 0, y: 0, type: 'archer' }, { x: 3, y: 1 }] });
   g.queueOrder(1, attack('down-right'));
-  let events = g.tick(); // speed 2: (1,1), (2,2)
+  let events = g.tick(); // speed 2: (1,0), (2,1)
   assert.deepEqual(kills(events), []);
-  events = g.tick(); // (3,3) hits unit 2 at t=1/2
+  events = g.tick(); // (3,1), 3 hexes out, hits unit 2 at t=1/2
   assert.deepEqual(kills(events), [2]);
 
-  const miss = new Game({ width: 6, height: 6, units: [{ x: 0, y: 0, type: 'archer' }, { x: 4, y: 4 }] });
+  const miss = new Game({ width: 6, height: 6, units: [{ x: 0, y: 0, type: 'archer' }, { x: 4, y: 2 }] });
   miss.queueOrder(1, attack('down-right'));
   miss.tick();
-  events = miss.tick(); // reaches (3,3), then would be at (4,4): past range, gone
+  events = miss.tick(); // reaches (3,1), then would be at (4,2): past range, gone
   assert.deepEqual(kills(events), []);
   assert.equal(miss.projectiles.length, 0);
   assert.ok(events.some((e) => e.type === 'projectileExpired'));
@@ -83,23 +85,23 @@ test('projectile range: an archer arrow stops after 3 cells', () => {
 
 test('the CPU plays new JSON units from their definitions', () => {
   const C = Teams.CPU;
-  // Archer shoots diagonally at an enemy within range...
-  const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: 'archer', team: C }, { x: 2, y: 2 }] });
+  // Archer shoots along its allowed line at an enemy within range...
+  const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: 'archer', team: C }, { x: 2, y: 1 }] });
   assert.deepEqual(planTurn(g, C), [[1, attack('down-right')]]);
-  // ...but not one beyond its range; it moves to a cell in range instead.
-  const far = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: 'archer', team: C }, { x: 5, y: 5 }] });
+  // ...but not one beyond its range; it moves to a hex with an in-range shot instead.
+  const far = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: 'archer', team: C }, { x: 6, y: 3 }] });
   const [[, order]] = planTurn(far, C);
   assert.equal(order.type, 'move');
-  const dist = Math.max(Math.abs(order.x - 5), Math.abs(order.y - 5));
-  assert.ok(Math.abs(order.x - 5) === Math.abs(order.y - 5) && dist <= 3, `firing cell ${order.x},${order.y} on a diagonal within range`);
+  const shots = ['down-right', 'up-left'].map((d) => firstInLine(far, order.x, order.y, d, 3));
+  assert.ok(shots.some((h) => h?.unit.id === 2), `firing hex ${order.x},${order.y} has an in-range shot`);
 
-  // Halberdier strikes an enemy 3 cells away in a straight line.
-  const h = new Game({ width: 8, height: 8, units: [{ x: 0, y: 4, type: 'halberdier', team: C }, { x: 3, y: 4 }] });
-  assert.deepEqual(planTurn(h, C), [[1, attack('right')]]);
+  // Halberdier strikes an enemy 3 hexes away in a straight line.
+  const h = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: 'halberdier', team: C }, { x: 0, y: 3 }] });
+  assert.deepEqual(planTurn(h, C), [[1, attack('down')]]);
 
   // A unit with no attack just closes in.
-  const sc = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: 'scout', team: C }, { x: 7, y: 0 }] });
-  assert.deepEqual(planTurn(sc, C), [[1, move(7, 0)]]);
+  const sc = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: 'scout', team: C }, { x: 0, y: 7 }] });
+  assert.deepEqual(planTurn(sc, C), [[1, move(0, 7)]]);
 });
 
 test('a match with JSON-only units runs to the end deterministically', () => {
@@ -122,15 +124,9 @@ test('a match with JSON-only units runs to the end deterministically', () => {
   assert.equal(run(), run());
 });
 
-test('old saves with shoot/thrust orders load as attack orders', () => {
-  const snap = {
-    width: 4, height: 1, tick: 0, nextUnitId: 3, units: [
-      { id: 1, x: 0, y: 0, type: 'gunslinger', team: 'player', speed: 1, order: null, orderSeq: null },
-      { id: 2, x: 3, y: 0, type: 'basic', team: 'cpu', speed: 1, order: null, orderSeq: null },
-    ],
-    queue: [{ unitId: 1, order: { type: 'shoot', dir: 'right' } }],
-  };
-  const g = Game.fromSnapshot(snap);
-  assert.deepEqual(g.queue[0].order, attack('right'));
-  assert.deepEqual(kills(g.tick()), [2]);
+test('square-grid direction sets give a helpful error', () => {
+  assert.throws(
+    () => defineUnitType('x', { name: 'X', speed: 1, attack: { kind: 'melee', reach: 1, directions: 'orthogonal' } }),
+    /must be all, vertical or a list of hex directions/,
+  );
 });

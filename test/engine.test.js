@@ -7,15 +7,16 @@ const pos = (game, id) => {
   return [u.x, u.y];
 };
 
-test('move order walks one cell per tick and clears on arrival', () => {
+test('move order walks one hex per tick along a straight hex line and clears on arrival', () => {
   const g = new Game({ width: 5, height: 5, units: [{ x: 0, y: 0 }] });
-  g.queueOrder(1, move(2, 1));
-  g.tick();
-  assert.deepEqual(pos(g, 1), [1, 0]);
-  g.tick();
-  assert.deepEqual(pos(g, 1), [2, 0]); // tie on axis gap -> x first
-  const events = g.tick();
-  assert.deepEqual(pos(g, 1), [2, 1]);
+  g.queueOrder(1, move(3, 3)); // 5 hex steps away
+  const path = [];
+  let events = [];
+  for (let i = 0; i < 5; i++) {
+    events = g.tick();
+    path.push(pos(g, 1));
+  }
+  assert.deepEqual(path, [[1, 0], [1, 1], [2, 2], [2, 3], [3, 3]]);
   assert.equal(g.getUnit(1).order, null);
   assert.ok(events.some((e) => e.type === 'arrived' && e.unitId === 1));
 });

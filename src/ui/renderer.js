@@ -1,7 +1,20 @@
 // Canvas renderer for the board. Purely a view: it reads game state and
 // draws; it never mutates the game.
+//
+// The board is flat-topped hexes in odd-q offset layout (see engine/hex.js).
+// `size` is the hex radius (centre to corner); `cell` is the distance between
+// neighbouring hex centres and is used to scale everything drawn in a cell.
 
-import { Directions as DIRS, UnitTypes, AttackKind, strikeCells } from '../engine/index.js';
+import {
+  UnitTypes, AttackKind, strikeCells, step, fromAxial, axialRound, DIRECTION_ANGLES,
+} from '../engine/index.js';
+
+const SQRT3 = Math.sqrt(3);
+
+/** Board size in units of the hex radius: [width, height]. */
+function boardExtent(game) {
+  return [1.5 * (game.width - 1) + 2, SQRT3 * (game.height + 0.5)];
+}
 
 const COLORS = {
   grid: '#2b323c',
@@ -29,6 +42,9 @@ export class Renderer {
 
   /** Match the canvas backing store to its CSS size and device pixel ratio. */
   resize(game) {
+    // Give the canvas the board's own aspect ratio so hexes fill it.
+    const [bw, bh] = boardExtent(game);
+    if (this.canvas.parentElement) this.canvas.parentElement.style.aspectRatio = `${bw} / ${bh}`;
     const rect = this.canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     this.canvas.width = Math.round(rect.width * dpr);
@@ -40,21 +56,41 @@ export class Renderer {
   }
 
   layout(game) {
-    this.cell = Math.floor(Math.min(this.cssW / game.width, this.cssH / game.height));
-    this.ox = Math.floor((this.cssW - this.cell * game.width) / 2);
-    this.oy = Math.floor((this.cssH - this.cell * game.height) / 2);
+    const [bw, bh] = boardExtent(game);
+    this.size = Math.min(this.cssW / bw, this.cssH / bh);
+    this.cell = this.size * SQRT3;
+    // Centre of hex (0, 0).
+    this.ox = (this.cssW - bw * this.size) / 2 + this.size;
+    this.oy = (this.cssH - bh * this.size) / 2 + (SQRT3 / 2) * this.size;
   }
 
-  /** Convert a pointer event to a grid cell, or null if outside the grid. */
+  /** Convert a pointer event to a hex, or null if outside the board. */
   cellFromEvent(ev, game) {
     const rect = this.canvas.getBoundingClientRect();
-    const x = Math.floor((ev.clientX - rect.left - this.ox) / this.cell);
-    const y = Math.floor((ev.clientY - rect.top - this.oy) / this.cell);
+    const px = ev.clientX - rect.left - this.ox;
+    const py = ev.clientY - rect.top - this.oy;
+    const q = ((2 / 3) * px) / this.size;
+    const r = ((-1 / 3) * px + (SQRT3 / 3) * py) / this.size;
+    const [x, y] = fromAxial(...axialRound(q, r));
     return game.inBounds(x, y) ? { x, y } : null;
   }
 
   center(x, y) {
-    return [this.ox + (x + 0.5) * this.cell, this.oy + (y + 0.5) * this.cell];
+    return [this.ox + 1.5 * this.size * x, this.oy + SQRT3 * this.size * (y + 0.5 * (x & 1))];
+  }
+
+  /** Trace a flat-topped hexagon. */
+  hexPath(cx, cy, radius) {
+    const { ctx } = this;
+    ctx.beginPath();
+    for (let k = 0; k < 6; k++) {
+      const a = (Math.PI / 3) * k;
+      const px = cx + radius * Math.cos(a);
+      const py = cy + radius * Math.sin(a);
+      if (k === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
   }
 
   /**
@@ -68,21 +104,16 @@ export class Renderer {
 
     // Grid.
     ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(this.ox, this.oy, cell * game.width, cell * game.height);
     ctx.strokeStyle = COLORS.grid;
     ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let i = 0; i <= game.width; i++) {
-      const px = this.ox + i * cell + 0.5;
-      ctx.moveTo(px, this.oy);
-      ctx.lineTo(px, this.oy + game.height * cell);
+    for (let x = 0; x < game.width; x++) {
+      for (let y = 0; y < game.height; y++) {
+        const [cx, cy] = this.center(x, y);
+        this.hexPath(cx, cy, this.size - 0.5);
+        ctx.fill();
+        ctx.stroke();
+      }
     }
-    for (let j = 0; j <= game.height; j++) {
-      const py = this.oy + j * cell + 0.5;
-      ctx.moveTo(this.ox, py);
-      ctx.lineTo(this.ox + game.width * cell, py);
-    }
-    ctx.stroke();
 
     // Orders: the last queued order per unit overrides its active order.
     const queued = new Map();
@@ -143,7 +174,8 @@ export class Renderer {
     // Projectiles: a dot with a short tail pointing back the way it came.
     for (const p of game.projectiles) {
       const [cx, cy] = this.center(p.x, p.y);
-      const [dx, dy] = DIRS[p.dir];
+      const dx = Math.cos(DIRECTION_ANGLES[p.dir]);
+      const dy = Math.sin(DIRECTION_ANGLES[p.dir]);
       ctx.strokeStyle = COLORS.projectile;
       ctx.lineWidth = 3;
       ctx.beginPath();
@@ -184,22 +216,22 @@ export class Renderer {
 
   /** Shade the cells a queued melee attack will strike, in the attacker's team colour. */
   drawStrike(game, u, dir, reach) {
-    const { ctx, cell } = this;
+    const { ctx } = this;
     const color = TEAM_COLORS[u.team] ?? '#ffffff';
     const [ax, ay] = this.center(u.x, u.y);
     const cells = strikeCells(u, dir, reach).filter(([x, y]) => game.inBounds(x, y));
     ctx.save();
     for (const [x, y] of cells) {
-      const px = this.ox + x * cell;
-      const py = this.oy + y * cell;
+      const [cx, cy] = this.center(x, y);
+      this.hexPath(cx, cy, this.size - 3);
       ctx.globalAlpha = 0.28;
       ctx.fillStyle = color;
-      ctx.fillRect(px + 2, py + 2, cell - 4, cell - 4);
+      ctx.fill();
       ctx.globalAlpha = 1;
       ctx.strokeStyle = color;
       ctx.lineWidth = 2;
       ctx.setLineDash([4, 3]);
-      ctx.strokeRect(px + 3, py + 3, cell - 6, cell - 6);
+      ctx.stroke();
       ctx.setLineDash([]);
     }
     // The pike itself: a line from the unit through the struck cells.
@@ -218,12 +250,11 @@ export class Renderer {
   /** Dashed ray from a unit to the edge of the grid (or its range) for a queued shot. */
   drawShotLine(game, u, dir, range = null) {
     const { ctx } = this;
-    const [dx, dy] = DIRS[dir];
-    let ex = u.x;
-    let ey = u.y;
-    for (let d = 1; game.inBounds(ex + dx, ey + dy) && (range === null || d <= range); d++) {
-      ex += dx;
-      ey += dy;
+    const dx = Math.cos(DIRECTION_ANGLES[dir]);
+    const dy = Math.sin(DIRECTION_ANGLES[dir]);
+    let [ex, ey] = [u.x, u.y];
+    for (let d = 1, next = step(ex, ey, dir); game.inBounds(...next) && (range === null || d <= range); d++, next = step(ex, ey, dir)) {
+      [ex, ey] = next;
     }
     const [ax, ay] = this.center(u.x, u.y);
     const [bx, by] = this.center(ex, ey);

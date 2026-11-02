@@ -8,20 +8,10 @@ export const OrderType = Object.freeze({
   ATTACK: 'attack',
 });
 
-/** Grid directions. y grows downward, so "up" is y - 1. */
-export const Directions = Object.freeze({
-  up: Object.freeze([0, -1]),
-  down: Object.freeze([0, 1]),
-  left: Object.freeze([-1, 0]),
-  right: Object.freeze([1, 0]),
-  'up-left': Object.freeze([-1, -1]),
-  'up-right': Object.freeze([1, -1]),
-  'down-left': Object.freeze([-1, 1]),
-  'down-right': Object.freeze([1, 1]),
-});
+import { ALL_DIRECTIONS } from './hex.js';
 
-export const ORTHOGONAL = Object.freeze(['up', 'down', 'left', 'right']);
-export const ALL_DIRECTIONS = Object.freeze(Object.keys(Directions));
+// Directions are hex directions; see hex.js.
+export { Directions, ALL_DIRECTIONS } from './hex.js';
 
 /** Create a move order: walk toward (x, y) at the unit's speed. */
 export function move(x, y) {
@@ -29,7 +19,7 @@ export function move(x, y) {
 }
 
 /**
- * Create an attack order in a direction ("up", "down-left", ...). What the
+ * Create an attack order in a hex direction ("up", "down-left", ...). What the
  * attack does (shoot, strike, ...) comes from the unit's type definition.
  */
 export function attack(dir) {

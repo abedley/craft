@@ -1,6 +1,5 @@
 {
   "default": "pikeman",
-  "renamed": { "basic": "pikeman" },
   "units": {
     "pikeman": {
       "name": "Pikeman",
@@ -19,7 +18,7 @@
       "attack": {
         "kind": "projectile",
         "speed": 4,
-        "directions": "orthogonal"
+        "directions": "all"
       }
     }
   }

@@ -33,11 +33,12 @@
 //                 { "kind": "projectile", "speed": 4, "directions": "orthogonal",
 //                   "range": 6 }
 //
-//   "directions" is "all" (8), "orthogonal" (up/down/left/right), "diagonal",
-//   or a list such as ["up", "down-left"].
+//   "directions" is "all" (the 6 hex directions), "vertical" (up/down), or a
+//   list such as ["up", "down-left"]. Hex directions: up, up-right,
+//   down-right, down, down-left, up-left.
 
 import data from '../data/units.json' with { type: 'json' };
-import { Directions, ALL_DIRECTIONS, ORTHOGONAL, OrderType } from './orders.js';
+import { Directions, ALL_DIRECTIONS, OrderType } from './orders.js';
 
 /** Fastest allowed speed (units and projectiles), in cells per tick. */
 export const MAX_SPEED = 6;
@@ -45,8 +46,7 @@ export const MAX_SPEED = 6;
 export const AttackKind = Object.freeze({ MELEE: 'melee', PROJECTILE: 'projectile' });
 export const SHAPES = Object.freeze(['circle', 'diamond', 'square', 'triangle']);
 
-const DIAGONAL = Object.freeze(ALL_DIRECTIONS.filter((d) => !ORTHOGONAL.includes(d)));
-const DIRECTION_SETS = { all: ALL_DIRECTIONS, orthogonal: ORTHOGONAL, diagonal: DIAGONAL };
+const DIRECTION_SETS = { all: ALL_DIRECTIONS, vertical: Object.freeze(['up', 'down']) };
 
 /** Registered unit types by key. Entries are frozen, normalized definitions. */
 export const UnitTypes = {};
@@ -143,7 +143,9 @@ function checkSpeed(v, label, fail) {
 
 function parseDirections(spec, fail) {
   if (typeof spec === 'string') {
-    if (!DIRECTION_SETS[spec]) fail(`"attack.directions" must be ${Object.keys(DIRECTION_SETS).join(', ')} or a list`);
+    if (!DIRECTION_SETS[spec]) {
+      fail(`"attack.directions" must be ${Object.keys(DIRECTION_SETS).join(', ')} or a list of hex directions (${ALL_DIRECTIONS.join(', ')})`);
+    }
     return DIRECTION_SETS[spec];
   }
   if (Array.isArray(spec) && spec.length > 0) {

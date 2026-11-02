@@ -18,7 +18,7 @@
 // makes the CPU re-plan. "Back" restores the snapshot taken just before the
 // last "End turn", including both sides' staged orders (an exact undo).
 
-import { Game, Teams, MAX_SPEED, move, attack, Directions, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
+import { Game, Teams, MAX_SPEED, move, attack, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
 import { Match, MatchStatus } from '../match.js';
 import { Renderer } from './renderer.js';
 import { scenarios } from '../scenarios.js';
@@ -267,7 +267,7 @@ export class DebugUI {
     if (!unit) return null;
     const def = UnitTypes[unit.type];
     if (!def.attack) return null;
-    return (x, y) => attack(nearestDirection(unit, x, y, def.attack.directions));
+    return (x, y) => attack(nearestDirection(this.renderer, unit, x, y, def.attack.directions));
   }
 
   tick() {
@@ -442,16 +442,21 @@ function fmtOrder(o) {
   return o.type;
 }
 
-// Tie-break when a tap is exactly between two allowed directions: horizontal first.
-const TAP_PRIORITY = ['right', 'left', 'down', 'up', 'down-right', 'down-left', 'up-right', 'up-left'];
+// Tie-break when a tap is exactly between two allowed directions.
+const TAP_PRIORITY = ['up', 'down', 'up-right', 'down-right', 'down-left', 'up-left'];
 
-/** The allowed direction closest in angle to the line from a unit to a cell. */
-function nearestDirection(u, x, y, allowed) {
-  const target = Math.atan2(y - u.y, x - u.x);
+/**
+ * The allowed hex direction closest in angle to the on-screen line from a
+ * unit to a tapped cell (angles are measured on screen, since hex rows are
+ * staggered).
+ */
+function nearestDirection(renderer, u, x, y, allowed) {
+  const [ax, ay] = renderer.center(u.x, u.y);
+  const [bx, by] = renderer.center(x, y);
+  const target = Math.atan2(by - ay, bx - ax);
   let best = null;
   for (const dir of TAP_PRIORITY.filter((d) => allowed.includes(d))) {
-    const [vx, vy] = Directions[dir];
-    let diff = Math.abs(target - Math.atan2(vy, vx));
+    let diff = Math.abs(target - DIRECTION_ANGLES[dir]);
     if (diff > Math.PI) diff = 2 * Math.PI - diff;
     if (!best || diff < best.diff - 1e-9) best = { dir, diff };
   }

@@ -6,7 +6,8 @@
 //   * Orders are applied in the order they were queued.
 //   * State is plain JSON so it can be snapshotted, hashed and replayed.
 
-import { validateOrder, OrderType, Directions } from './orders.js';
+import { validateOrder, OrderType } from './orders.js';
+import { step, distance, hexLineStep, neighbors } from './hex.js';
 import { resolveMoves } from './resolve.js';
 import * as Units from './unitTypes.js';
 import { getUnitType, AttackKind, MAX_SPEED } from './unitTypes.js';
@@ -27,6 +28,7 @@ export class Game {
       throw new Error('Grid width and height must be positive integers');
     }
     this.state = {
+      grid: 'hex', // flat-topped hexes, odd-q offset coordinates (see hex.js)
       width,
       height,
       tick: 0,
@@ -44,23 +46,10 @@ export class Game {
 
   static fromSnapshot(snapshot) {
     const game = new Game({ width: snapshot.width, height: snapshot.height });
+    if (snapshot.grid !== 'hex') {
+      throw new Error('This save is from the square-grid version of the game and can\'t be loaded on the hex grid');
+    }
     game.state = structuredClone(snapshot);
-    // Fill in fields that older snapshots don't have.
-    game.state.nextOrderSeq ??= 1;
-    game.state.nextProjectileId ??= 1;
-    game.state.projectiles ??= [];
-    for (const p of game.state.projectiles) p.range ??= null;
-    for (const q of game.state.queue) {
-      // Before attacks were data-driven there were separate shoot/thrust orders.
-      if (q.order.type === 'shoot' || q.order.type === 'thrust') q.order = { type: OrderType.ATTACK, dir: q.order.dir };
-    }
-    for (const u of game.state.units) {
-      u.orderSeq ??= null;
-      u.type ??= Units.DEFAULT_UNIT_TYPE;
-      u.type = Units.RENAMED_TYPES[u.type] ?? u.type;
-      u.team ??= Teams.PLAYER;
-      u.speed ??= getUnitType(u.type).speed;
-    }
     return game;
   }
 
@@ -257,7 +246,7 @@ export class Game {
       // a. Units.
       const movedFrom = new Map(); // unit id -> cell it left this instant
       const intents = s.units.map((u) => {
-        const next = stepsAt(u, j) ? nextStep(u) : { x: u.x, y: u.y };
+        const next = stepsAt(u, j) ? nextStep(u, s) : { x: u.x, y: u.y };
         return { id: u.id, x: u.x, y: u.y, tx: next.x, ty: next.y, priority: u.orderSeq };
       });
       if (intents.some((it) => it.tx !== it.x || it.ty !== it.y)) {
@@ -279,10 +268,8 @@ export class Game {
       const projFrom = new Map(); // projectile id -> cell it left this instant
       for (const p of s.projectiles) {
         if (!stepsAt(p, j)) continue;
-        const [dx, dy] = Directions[p.dir];
         projFrom.set(p.id, [p.x, p.y]);
-        p.x += dx;
-        p.y += dy;
+        [p.x, p.y] = step(p.x, p.y, p.dir);
         p.traveled += 1;
         if (this.inBounds(p.x, p.y) && !pastRange(p)) projPaths.get(p.id).push([p.x, p.y]);
       }
@@ -391,9 +378,12 @@ const pastRange = (p) => p.range !== null && p.traveled > p.range;
 
 /** The `reach` cells in a row next to a unit in a direction. */
 export function strikeCells(unit, dir, reach) {
-  const [dx, dy] = Directions[dir];
   const cells = [];
-  for (let k = 1; k <= reach; k++) cells.push([unit.x + dx * k, unit.y + dy * k]);
+  let [x, y] = [unit.x, unit.y];
+  for (let k = 1; k <= reach; k++) {
+    [x, y] = step(x, y, dir);
+    cells.push([x, y]);
+  }
   return cells;
 }
 
@@ -419,18 +409,29 @@ function lcm(a, b) {
 }
 
 /**
- * The cell a unit wants to enter on its next step. Moves one cell orthogonally,
- * closing the larger axis gap first (x on ties). No pathfinding yet: a
- * blocked unit simply tries again on its next step.
+ * The cell a unit wants to enter on its next step: one hex toward its move
+ * target along a straight hex line. If that cell is off the board (lines can
+ * clip the board's zig-zag edges), the in-board neighbour that gets closest
+ * to the target is used instead (ties: direction order in hex.js). No
+ * pathfinding around units yet: a blocked unit tries again on its next step.
+ *
+ * @param {{x:number,y:number,order:object|null}} unit
+ * @param {{width:number,height:number}} [board] bounds; omit for unbounded
  */
-export function nextStep(unit) {
+export function nextStep(unit, board = null) {
   const o = unit.order;
   if (!o || o.type !== OrderType.MOVE) return { x: unit.x, y: unit.y };
-  const dx = o.x - unit.x;
-  const dy = o.y - unit.y;
-  if (dx === 0 && dy === 0) return { x: unit.x, y: unit.y };
-  if (Math.abs(dx) >= Math.abs(dy)) return { x: unit.x + Math.sign(dx), y: unit.y };
-  return { x: unit.x, y: unit.y + Math.sign(dy) };
+  if (o.x === unit.x && o.y === unit.y) return { x: unit.x, y: unit.y };
+  const inside = (x, y) => !board || (x >= 0 && y >= 0 && x < board.width && y < board.height);
+  const [lx, ly] = hexLineStep(unit.x, unit.y, o.x, o.y);
+  if (inside(lx, ly)) return { x: lx, y: ly };
+  let best = null;
+  for (const [, x, y] of neighbors(unit.x, unit.y)) {
+    if (!inside(x, y)) continue;
+    const d = distance(x, y, o.x, o.y);
+    if (!best || d < best.d) best = { x, y, d };
+  }
+  return best && best.d < distance(unit.x, unit.y, o.x, o.y) ? { x: best.x, y: best.y } : { x: unit.x, y: unit.y };
 }
 
 /** Canonical JSON (sorted keys) so key insertion order can't change hashes. */

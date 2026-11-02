@@ -94,16 +94,10 @@ test('a blocked fast unit retries at its next step within the tick', () => {
   assert.equal(b.time, '1/4'); // first time it was blocked
 });
 
-test('speed validation and old snapshots', () => {
+test('speed validation', () => {
   const g = new Game({ width: 3, height: 3 });
   assert.throws(() => g.addUnit(0, 0, undefined, { speed: 0 }), /Speed/);
   assert.throws(() => g.addUnit(0, 0, undefined, { speed: 1.5 }), /Speed/);
-  const snap = { width: 3, height: 3, tick: 0, nextUnitId: 2, queue: [], units: [{ id: 1, x: 0, y: 0, order: null }] };
-  const loaded = Game.fromSnapshot(snap);
-  assert.equal(loaded.getUnit(1).speed, 1);
-  loaded.queueOrder(1, move(2, 0));
-  loaded.tick();
-  assert.deepEqual(pos(loaded, 1), [1, 0]);
 });
 
 test('mixed-speed replay is deterministic', () => {
