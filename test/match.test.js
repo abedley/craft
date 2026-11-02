@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Game, Teams, move, shoot } from '../src/engine/index.js';
+import { Game, Teams, move, attack } from '../src/engine/index.js';
 import { Match, MatchStatus } from '../src/match.js';
 import { planTurn } from '../src/ai/cpu.js';
 
@@ -18,7 +18,7 @@ test('units default to the player team; unknown teams are rejected', () => {
 
 test('friendly fire: a projectile kills a teammate in its line', () => {
   const g = new Game({ width: 6, height: 1, units: [{ x: 0, y: 0, type: G }, { x: 2, y: 0 }, { x: 4, y: 0, team: C }] });
-  g.queueOrder(1, shoot('right'));
+  g.queueOrder(1, attack('right'));
   const events = g.tick();
   const k = events.find((e) => e.type === 'killed');
   assert.deepEqual([k.unitId, k.team], [2, P]);
@@ -72,7 +72,7 @@ test('CPU gunslinger shoots an enemy in line, but not through a teammate', () =>
     units: [{ x: 0, y: 0, type: G, team: C }, { x: 5, y: 0 }, { x: 0, y: 2, team: C }, { x: 0, y: 6 }],
   });
   const plan = planTurn(g, C);
-  assert.deepEqual(plan.find(([id]) => id === 1)[1], shoot('right'));
+  assert.deepEqual(plan.find(([id]) => id === 1)[1], attack('right'));
 });
 
 test('CPU gunslinger blocked by a teammate moves to a clear firing cell', () => {
@@ -98,13 +98,13 @@ test('CPU gunslinger does not pick a firing cell blocked by another unit', () =>
 
 test('CPU dodges an incoming projectile when it has time', () => {
   const g = new Game({ width: 10, height: 3, units: [{ x: 0, y: 1, type: G }, { x: 7, y: 1, team: C }] });
-  g.queueOrder(1, shoot('right'));
+  g.queueOrder(1, attack('right'));
   g.tick(); // projectile at x=4, 3 cells away: it arrives at t=3/4, before the
   // unit could leave at t=1, so a dodge can't work and isn't tried.
   assert.ok(!planTurn(g, C).some(([, o]) => o.type === 'move' && o.y !== 1));
 
   const g2 = new Game({ width: 14, height: 3, units: [{ x: 0, y: 1, type: G }, { x: 9, y: 1, team: C }] });
-  g2.queueOrder(1, shoot('right'));
+  g2.queueOrder(1, attack('right'));
   g2.tick(); // projectile at x=4, 5 away: reaches x=9 at t=5/4; unit leaves at t=1
   const m = new Match(g2, { vsCpu: true });
   m.startTurn();
@@ -117,7 +117,7 @@ test('CPU dodges an incoming projectile when it has time', () => {
 test('match status: won, lost, draw', () => {
   const won = new Match(new Game({ width: 5, height: 1, units: [{ x: 0, y: 0, type: G }, { x: 4, y: 0, team: C }] }));
   won.startTurn();
-  won.playerOrder(1, shoot('right'));
+  won.playerOrder(1, attack('right'));
   // The CPU pikeman walks toward us into our shot.
   won.endTurn();
   assert.equal(won.status, MatchStatus.WON);
@@ -125,7 +125,7 @@ test('match status: won, lost, draw', () => {
 
   const draw = new Match(new Game({ width: 5, height: 1, units: [{ x: 0, y: 0, type: G }, { x: 4, y: 0, type: G, team: C }] }));
   draw.startTurn(); // CPU shoots left
-  draw.playerOrder(1, shoot('right'));
+  draw.playerOrder(1, attack('right'));
   draw.endTurn();
   draw.endTurn();
   assert.equal(draw.status, MatchStatus.DRAW);

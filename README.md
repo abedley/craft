@@ -21,8 +21,9 @@ index.html            debug UI shell
 css/style.css         mobile-first styles (safe areas, 44px touch targets)
 src/engine/           deterministic game engine (no DOM)
   game.js             Game state, order queue, tick(), projectiles
-  unitTypes.js        unit type registry (movement + attack abilities)
-  orders.js           order constructors + validation (move, shoot)
+  unitTypes.js        loads + validates unit definitions from JSON
+src/data/units.json   unit definitions (add new units here)
+  orders.js           order constructors + validation (move, attack)
   resolve.js          simultaneous move / collision resolution
 src/match.js          turn structure: CPU stages orders, player orders, end turn
 src/ai/cpu.js         deterministic CPU opponent
@@ -58,13 +59,15 @@ Deterministic: same board, same plan. For each CPU unit in id order:
 1. **Dodge** an incoming projectile that would reach it within two ticks with nothing in between, if
    it can still step out of the line in time.
 2. **Attack**:
-   - Gunslingers shoot if the first unit in some direction is an enemy, nearest first, and never when a
-     teammate is first in line.
-   - Pikemen thrust in the direction that catches the most enemies, as the board stands now. They
-     never thrust when a teammate stands in the strike, or is planned (earlier in the CPU's own plan)
+   - Projectile units shoot if the first unit in an allowed direction, within range, is an enemy
+     (nearest first), and never when a teammate is first in line.
+   - Melee units strike in the allowed direction that catches the most enemies, as the board stands
+     now. They never strike when a teammate stands in the strike, or is planned (earlier in the CPU's own plan)
      to step into it.
-3. **Move**: gunslingers head for the nearest free cell with a clear straight shot at an enemy;
-   pikemen walk toward the nearest enemy.
+3. **Move**: projectile units head for the nearest free cell with a clear, in-range shot at an enemy;
+   everyone else walks toward the nearest enemy.
+
+All of this reads from the unit definitions, so JSON-only units are played sensibly too.
 
 ## Engine model
 
@@ -72,16 +75,16 @@ Deterministic: same board, same plan. For each CPU unit in id order:
 - Every unit has a **type** (`src/engine/unitTypes.js`) that defines its speed, which orders it
   accepts, and what it fires. Ordering a unit to do something its type can't do throws.
 - During a turn the player queues orders (`game.queueOrder(unitId, move(x, y))`,
-  `game.queueOrder(unitId, shoot('right'))`). Nothing changes until `game.tick()`.
+  `game.queueOrder(unitId, attack('right'))`). Nothing changes until `game.tick()`.
   If a unit gets several orders in one turn, only the last is carried out.
 - `tick()`:
-  1. applies queued orders in queue order (`shoot` fires immediately, see *Combat*),
+  1. applies queued orders in queue order (see *Combat* for `attack`),
   2. moves units in timed **sub-steps** (see *Speed* below); at each sub-step every unit
      due to step picks one orthogonal step toward its target (larger axis gap first,
      x on ties; no pathfinding yet) and those steps are resolved **simultaneously**,
   3. units that reached their target drop their order.
   It returns an event list (`orderApplied`, `moved` with the full `path`, `blocked` with the
-  sub-step `time` it first happened, `arrived`, `shot`, `projectileMoved`, `killed`,
+  sub-step `time` it first happened, `arrived`, `shot`, `strike`, `projectileMoved`, `killed`,
   `projectileExpired`).
 - Move orders persist across ticks until the unit arrives or gets a new order.
   A blocked unit simply tries again next tick.
@@ -103,40 +106,80 @@ single-step collision rules below, while everyone else stands still and holds th
   slow one's pace.
 - A blocked unit retries at its own next step time within the same tick.
 
-### Unit types
+### Unit types (defined in JSON)
 
-| Type | Speed | Orders | Attack |
-| --- | --- | --- | --- |
-| `pikeman` (default) | 1 | move, thrust | kills the 2 cells in a row next to it, any of 8 directions, at the end of the tick |
-| `gunslinger` | 1 | move, shoot | projectile, 4 directions, speed 4, unlimited range |
+Unit types live in **`src/data/units.json`**. Adding a unit is a JSON-only change: the engine, CPU,
+renderer and debug UI all read behaviour from the definition, and the file is validated on load with
+error messages that name the unit and field.
 
-(Older saves with `basic` units load them as pikemen.)
+```json
+{
+  "default": "pikeman",
+  "renamed": { "basic": "pikeman" },
+  "units": {
+    "pikeman": {
+      "name": "Pikeman", "speed": 1, "shape": "circle",
+      "attack": { "kind": "melee", "reach": 2, "directions": "all" }
+    },
+    "gunslinger": {
+      "name": "Gunslinger", "speed": 1, "shape": "diamond",
+      "attack": { "kind": "projectile", "speed": 4, "directions": "orthogonal" }
+    }
+  }
+}
+```
 
-`new Game({ units: [{ x, y, type: 'gunslinger' }] })` or `game.addUnit(x, y, id, { type })`. A unit's
-speed starts at its type's speed; `speed` / `setSpeed` override it (for debugging and tests).
+| Field | Meaning |
+| --- | --- |
+| `name` | display name (required) |
+| `speed` | cells per tick, 1–6 (required) |
+| `shape` | `circle` (default), `diamond`, `square`, `triangle` |
+| `attack` | leave it out for a unit that can't attack |
+| `attack.kind` | `melee` or `projectile` |
+| `attack.directions` | `all` (8), `orthogonal`, `diagonal`, or a list like `["up", "down-left"]` |
+| `attack.reach` | melee: how many cells in a row it strikes |
+| `attack.speed` | projectile: cells per tick, 1–6 |
+| `attack.range` | projectile: max cells travelled; leave it out for unlimited |
+| `default` | type used when a unit doesn't name one |
+| `renamed` | old type keys mapped to current ones, so old saves still load |
+
+Example: a range-limited diagonal archer, which needs no code:
+
+```json
+"archer": {
+  "name": "Archer", "speed": 1, "shape": "triangle",
+  "attack": { "kind": "projectile", "speed": 2, "range": 3, "directions": "diagonal" }
+}
+```
+
+Only a brand-new attack *kind* (e.g. an area blast) needs code: in `unitTypes.js` (validation),
+`game.js` (resolution), `ai/cpu.js` (CPU use) and `ui/renderer.js` (drawing the queued attack).
+`registerUnitTypes(json)` can also add types at runtime, as `test/units.test.js` does.
+
+A unit's speed starts at its type's speed; `speed` / `setSpeed` override it for debugging and tests.
 
 ### Combat
 
-**Thrust** (`thrust(dir)`, `dir` is `up`, `down`, `left`, `right`, `up-left`, `up-right`, `down-left`,
-`down-right`):
+Every attacking unit uses the same order, `attack(dir)` (`dir`: `up`, `down`, `left`, `right`,
+`up-left`, `up-right`, `down-left`, `down-right`, limited to what the type allows). The unit holds
+still that tick and any move order is cancelled. What happens depends on its `attack.kind`.
 
-- The pikeman holds still that tick (any move order is cancelled) and strikes at the **end of the
-  tick** (t = 1). Every unit in the 2 cells in a row next to it in that direction dies, teammates
-  included.
+**Melee** (pikeman):
+
+- Strikes at the **end of the tick** (t = 1). Every unit in the `reach` cells in a row next to it
+  in that direction dies, teammates included.
 - Because it lands at the end, a unit that steps out of the zone during the tick escapes, and a unit
-  that walks into it is hit. Combined with the visible CPU plan, you can dodge a CPU thrust or aim yours
+  that walks into it is hit. Combined with the visible CPU plan, you can dodge a CPU strike or aim yours
   where a CPU unit is heading.
-- It happens at the same instant as any projectile hits at t = 1: a pikeman shot at t = 1 still strikes,
-  but one killed earlier in the tick doesn't. Two pikemen thrusting at each other both die.
+- It happens at the same instant as any projectile hits at t = 1: a striker shot at t = 1 still strikes,
+  but one killed earlier in the tick doesn't. Two pikemen striking each other both die.
 
-**Shoot**:
+**Projectile** (gunslinger):
 
-- `shoot(dir)` with `dir` one of `up`, `down`, `left`, `right`. The projectile spawns in the shooter's
-  cell at the start of the tick. Shooting cancels the shooter's move order, and the shooter stays put
-  that tick.
+- The projectile spawns in the shooter's cell at the start of the tick.
 - Projectiles are on the same sub-step timeline as units (a speed-4 projectile steps at
   t = ¼, ½, ¾, 1). They fly straight, never steer, are never blocked, don't block units, and keep
-  going across ticks until they hit something or leave the grid (unlimited range).
+  going across ticks until they hit something, leave the grid, or pass their `range` (if set).
 - At each instant, after units and projectiles have stepped, a projectile **hits** a unit if they
   share a cell (except a projectile still sitting in its shooter's cell), or if they passed
   through each other that instant. The unit is **killed and removed immediately**, freeing its cell for
@@ -170,8 +213,8 @@ UI header, so two runs with the same orders can be compared at a glance.
   lines, listed first in the Queue tab); tap **End turn** when your orders are in. The header shows
   YOU WIN / YOU LOSE / DRAW when a side is wiped out.
 - **Move** mode: tap one of your units to select it, tap an empty cell to queue `move(x, y)`.
-- **Attack** mode: tap one of your units, then tap any cell or unit to attack toward it. Gunslingers
-  shoot along the dominant axis; pikemen thrust in the nearest of 8 directions. Queued thrusts shade the
+- **Attack** mode: tap one of your units, then tap any cell or unit to attack toward it, snapped to the
+  nearest direction that unit's type allows. Queued melee attacks shade the
   struck cells in the team's colour.
 - **Add** / **Remove** modes edit the board (the CPU re-plans after edits). The type and team pickers
   set what gets added.

@@ -5,8 +5,7 @@
 
 export const OrderType = Object.freeze({
   MOVE: 'move',
-  SHOOT: 'shoot',
-  THRUST: 'thrust',
+  ATTACK: 'attack',
 });
 
 /** Grid directions. y grows downward, so "up" is y - 1. */
@@ -29,14 +28,12 @@ export function move(x, y) {
   return { type: OrderType.MOVE, x, y };
 }
 
-/** Create a shoot order: fire one projectile in a direction ("up", ...). */
-export function shoot(dir) {
-  return { type: OrderType.SHOOT, dir };
-}
-
-/** Create a thrust order: melee strike in a direction ("up", "down-left", ...). */
-export function thrust(dir) {
-  return { type: OrderType.THRUST, dir };
+/**
+ * Create an attack order in a direction ("up", "down-left", ...). What the
+ * attack does (shoot, strike, ...) comes from the unit's type definition.
+ */
+export function attack(dir) {
+  return { type: OrderType.ATTACK, dir };
 }
 
 /**
@@ -55,11 +52,8 @@ export function validateOrder(order, grid, unitType = null) {
       if (x < 0 || y < 0 || x >= grid.width || y >= grid.height) return 'target out of bounds';
       return null;
     }
-    case OrderType.SHOOT:
-    case OrderType.THRUST: {
-      const allowed = unitType
-        ? (order.type === OrderType.SHOOT ? unitType.projectile : unitType.melee).directions
-        : ALL_DIRECTIONS;
+    case OrderType.ATTACK: {
+      const allowed = unitType ? unitType.attack.directions : ALL_DIRECTIONS;
       if (!allowed.includes(order.dir)) return `direction must be one of ${allowed.join(', ')}`;
       return null;
     }

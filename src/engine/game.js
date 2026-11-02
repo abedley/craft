@@ -8,13 +8,14 @@
 
 import { validateOrder, OrderType, Directions } from './orders.js';
 import { resolveMoves } from './resolve.js';
-import { getUnitType, DEFAULT_UNIT_TYPE, RENAMED_TYPES } from './unitTypes.js';
+import * as Units from './unitTypes.js';
+import { getUnitType, AttackKind, MAX_SPEED } from './unitTypes.js';
+
+export { MAX_SPEED };
 
 /** Sides. Friendly fire is on: projectiles hit any unit regardless of team. */
 export const Teams = Object.freeze({ PLAYER: 'player', CPU: 'cpu' });
 
-/** Fastest allowed unit speed, in cells per tick. */
-export const MAX_SPEED = 6;
 
 export class Game {
   /**
@@ -48,10 +49,15 @@ export class Game {
     game.state.nextOrderSeq ??= 1;
     game.state.nextProjectileId ??= 1;
     game.state.projectiles ??= [];
+    for (const p of game.state.projectiles) p.range ??= null;
+    for (const q of game.state.queue) {
+      // Before attacks were data-driven there were separate shoot/thrust orders.
+      if (q.order.type === 'shoot' || q.order.type === 'thrust') q.order = { type: OrderType.ATTACK, dir: q.order.dir };
+    }
     for (const u of game.state.units) {
       u.orderSeq ??= null;
-      u.type ??= DEFAULT_UNIT_TYPE;
-      u.type = RENAMED_TYPES[u.type] ?? u.type;
+      u.type ??= Units.DEFAULT_UNIT_TYPE;
+      u.type = Units.RENAMED_TYPES[u.type] ?? u.type;
       u.team ??= Teams.PLAYER;
       u.speed ??= getUnitType(u.type).speed;
     }
@@ -94,12 +100,12 @@ export class Game {
    * @param {number} y
    * @param {number} [id] defaults to the next free id
    * @param {{type?:string, team?:string, speed?:number}} [opts]
-   *   type: key of UnitTypes (default "pikeman").
+   *   type: key of UnitTypes (default: the units file's "default").
    *   team: Teams.PLAYER (default) or Teams.CPU.
    *   speed: cells per tick; defaults to the type's speed. Overriding it is
    *   meant for debugging/tests.
    */
-  addUnit(x, y, id, { type = DEFAULT_UNIT_TYPE, team = Teams.PLAYER, speed } = {}) {
+  addUnit(x, y, id, { type = Units.DEFAULT_UNIT_TYPE, team = Teams.PLAYER, speed } = {}) {
     if (!this.inBounds(x, y)) throw new Error(`Cell ${x},${y} is out of bounds`);
     const def = getUnitType(type);
     speed ??= def.speed;
@@ -156,10 +162,10 @@ export class Game {
    *
    * 1. Apply queued orders (only the last one per unit, in queue order).
    *    - move: becomes the unit's standing order.
-   *    - shoot: fires a projectile from the unit's cell right away and
-   *      cancels any move order; the unit holds still this tick.
-   *    - thrust: the unit holds still and strikes at the END of the tick
-   *      (see 2e); it cancels any move order.
+   *    - attack: the unit holds still this tick and any move order is
+   *      cancelled. What happens depends on its type's attack kind:
+   *        projectile: a projectile is fired from the unit's cell right away;
+   *        melee: the unit strikes at the END of the tick (see 2e).
    *
    * 2. Run the tick as a sequence of instants ("sub-steps"). Anything with
    *    speed v (units and projectiles) takes one step at each of the times
@@ -179,9 +185,10 @@ export class Game {
    *         moved P'->P while the projectile moved P->P'). The unit is killed
    *         and removed at once, freeing its cell; the projectile is used up.
    *         Projectiles don't interact with each other.
-   *      d. Projectiles that left the grid are removed.
+   *      d. Projectiles that left the grid or went past their range are
+   *         removed.
    *      e. At the last instant (t = 1) only, at the same moment as that
-   *         instant's projectile hits: each thrusting unit still alive kills
+   *         instant's projectile hits: each melee attacker still alive kills
    *         every unit in the `reach` cells in a row next to it in its
    *         direction (friendly fire included). Units that left those cells
    *         earlier escape; units that walked in get hit.
@@ -198,7 +205,7 @@ export class Game {
     const events = [];
 
     // 1. Apply queued orders: last one per unit wins.
-    const thrusts = []; // [{ unitId, dir }], struck at t = 1
+    const strikes = []; // melee attacks [{ unitId, dir }], landing at t = 1
     const lastIndex = new Map();
     s.queue.forEach((q, i) => lastIndex.set(q.unitId, i));
     s.queue.forEach(({ unitId, order }, i) => {
@@ -209,24 +216,26 @@ export class Game {
         return;
       }
       events.push({ type: 'orderApplied', unitId, order });
-      if (order.type === OrderType.SHOOT) {
+      if (order.type === OrderType.ATTACK) {
         unit.order = null;
         unit.orderSeq = null;
-        const p = {
-          id: s.nextProjectileId++,
-          ownerId: unit.id,
-          x: unit.x,
-          y: unit.y,
-          dir: order.dir,
-          speed: getUnitType(unit.type).projectile.speed,
-          traveled: 0,
-        };
-        s.projectiles.push(p);
-        events.push({ type: 'shot', unitId: unit.id, projectileId: p.id, dir: p.dir, from: [p.x, p.y] });
-      } else if (order.type === OrderType.THRUST) {
-        unit.order = null;
-        unit.orderSeq = null;
-        thrusts.push({ unitId: unit.id, dir: order.dir });
+        const atk = getUnitType(unit.type).attack;
+        if (atk.kind === AttackKind.PROJECTILE) {
+          const p = {
+            id: s.nextProjectileId++,
+            ownerId: unit.id,
+            x: unit.x,
+            y: unit.y,
+            dir: order.dir,
+            speed: atk.speed,
+            range: atk.range,
+            traveled: 0,
+          };
+          s.projectiles.push(p);
+          events.push({ type: 'shot', unitId: unit.id, projectileId: p.id, dir: p.dir, from: [p.x, p.y] });
+        } else if (atk.kind === AttackKind.MELEE) {
+          strikes.push({ unitId: unit.id, dir: order.dir });
+        }
       } else {
         unit.order = order;
         unit.orderSeq = s.nextOrderSeq++;
@@ -275,13 +284,13 @@ export class Game {
         p.x += dx;
         p.y += dy;
         p.traveled += 1;
-        if (this.inBounds(p.x, p.y)) projPaths.get(p.id).push([p.x, p.y]);
+        if (this.inBounds(p.x, p.y) && !pastRange(p)) projPaths.get(p.id).push([p.x, p.y]);
       }
 
       // c. Hits (all decided for this instant before anything is removed).
       const hits = []; // [projectile, victim]
       for (const p of s.projectiles) {
-        if (!this.inBounds(p.x, p.y)) continue;
+        if (!this.inBounds(p.x, p.y) || pastRange(p)) continue;
         let victim = s.units.find((u) => u.x === p.x && u.y === p.y && !(p.traveled === 0 && u.id === p.ownerId));
         const from = projFrom.get(p.id);
         if (!victim && from) {
@@ -301,17 +310,17 @@ export class Game {
         addKill(victim.id, { cause: 'projectile', sourceId: p.id, attackerId: p.ownerId });
       }
 
-      // e. Thrusts land at the end of the tick, simultaneously with this
-      //    instant's projectile hits (a pikeman shot at t=1 still strikes).
+      // e. Melee strikes land at the end of the tick, simultaneously with
+      //    this instant's projectile hits (a striker shot at t=1 still strikes).
       if (j === L) {
-        for (const t of thrusts) {
+        for (const t of strikes) {
           const attacker = this.getUnit(t.unitId);
           if (!attacker) continue; // killed earlier this tick
-          const cells = strikeCells(attacker, t.dir, getUnitType(attacker.type).melee.reach);
-          events.push({ type: 'thrust', unitId: attacker.id, dir: t.dir, cells: cells.filter(([x, y]) => this.inBounds(x, y)) });
+          const cells = strikeCells(attacker, t.dir, getUnitType(attacker.type).attack.reach);
+          events.push({ type: 'strike', unitId: attacker.id, dir: t.dir, cells: cells.filter(([x, y]) => this.inBounds(x, y)) });
           for (const [x, y] of cells) {
             const victim = this.unitAt(x, y);
-            if (victim) addKill(victim.id, { cause: 'thrust', sourceId: attacker.id, attackerId: attacker.id });
+            if (victim) addKill(victim.id, { cause: 'melee', sourceId: attacker.id, attackerId: attacker.id });
           }
         }
       }
@@ -337,7 +346,7 @@ export class Game {
       // d. Remove spent projectiles and ones that left the grid.
       s.projectiles = s.projectiles.filter((p) => {
         if (spent.has(p.id)) return false;
-        if (!this.inBounds(p.x, p.y)) {
+        if (!this.inBounds(p.x, p.y) || pastRange(p)) {
           events.push({ type: 'projectileExpired', projectileId: p.id, time });
           return false;
         }
@@ -376,6 +385,9 @@ export class Game {
   }
 }
 
+
+/** A projectile that has flown further than its range is spent. */
+const pastRange = (p) => p.range !== null && p.traveled > p.range;
 
 /** The `reach` cells in a row next to a unit in a direction. */
 export function strikeCells(unit, dir, reach) {

@@ -1,0 +1,26 @@
+{
+  "default": "pikeman",
+  "renamed": { "basic": "pikeman" },
+  "units": {
+    "pikeman": {
+      "name": "Pikeman",
+      "speed": 1,
+      "shape": "circle",
+      "attack": {
+        "kind": "melee",
+        "reach": 2,
+        "directions": "all"
+      }
+    },
+    "gunslinger": {
+      "name": "Gunslinger",
+      "speed": 1,
+      "shape": "diamond",
+      "attack": {
+        "kind": "projectile",
+        "speed": 4,
+        "directions": "orthogonal"
+      }
+    }
+  }
+}

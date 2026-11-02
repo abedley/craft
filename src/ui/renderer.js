@@ -1,7 +1,7 @@
 // Canvas renderer for the board. Purely a view: it reads game state and
 // draws; it never mutates the game.
 
-import { Directions as DIRS, UnitTypes, strikeCells } from '../engine/index.js';
+import { Directions as DIRS, UnitTypes, AttackKind, strikeCells } from '../engine/index.js';
 
 const COLORS = {
   grid: '#2b323c',
@@ -94,10 +94,10 @@ export class Renderer {
       if (order.type === 'move') {
         const color = !pending ? COLORS.activeOrder : u.team === 'cpu' ? TEAM_COLORS.cpu : COLORS.queuedOrder;
         this.drawOrderLine(u, order, color, !!pending);
-      } else if (order.type === 'shoot') {
-        this.drawShotLine(game, u, order.dir);
-      } else if (order.type === 'thrust') {
-        this.drawStrike(game, u, order.dir, UnitTypes[u.type].melee.reach);
+      } else if (order.type === 'attack') {
+        const atk = UnitTypes[u.type].attack;
+        if (atk.kind === AttackKind.PROJECTILE) this.drawShotLine(game, u, order.dir, atk.range);
+        else if (atk.kind === AttackKind.MELEE) this.drawStrike(game, u, order.dir, atk.reach);
       }
     }
 
@@ -116,16 +116,7 @@ export class Renderer {
       const [cx, cy] = this.center(u.x, u.y);
       ctx.fillStyle = unitColor(u);
       ctx.beginPath();
-      if (u.type === 'gunslinger') {
-        // Gunslingers are diamonds; pikemen are circles.
-        ctx.moveTo(cx, cy - r * 1.15);
-        ctx.lineTo(cx + r * 1.15, cy);
-        ctx.lineTo(cx, cy + r * 1.15);
-        ctx.lineTo(cx - r * 1.15, cy);
-        ctx.closePath();
-      } else {
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      }
+      this.unitShape(UnitTypes[u.type]?.shape ?? 'circle', cx, cy, r);
       ctx.fill();
       if (u.id === selectedId) {
         ctx.strokeStyle = COLORS.selected;
@@ -166,7 +157,32 @@ export class Renderer {
     }
   }
 
-  /** Shade the cells a queued thrust will strike, in the attacker's team colour. */
+  /** Trace a unit's outline (shape comes from its type definition). */
+  unitShape(shape, cx, cy, r) {
+    const { ctx } = this;
+    switch (shape) {
+      case 'diamond':
+        ctx.moveTo(cx, cy - r * 1.15);
+        ctx.lineTo(cx + r * 1.15, cy);
+        ctx.lineTo(cx, cy + r * 1.15);
+        ctx.lineTo(cx - r * 1.15, cy);
+        ctx.closePath();
+        break;
+      case 'square':
+        ctx.rect(cx - r * 0.9, cy - r * 0.9, r * 1.8, r * 1.8);
+        break;
+      case 'triangle':
+        ctx.moveTo(cx, cy - r * 1.15);
+        ctx.lineTo(cx + r * 1.1, cy + r * 0.8);
+        ctx.lineTo(cx - r * 1.1, cy + r * 0.8);
+        ctx.closePath();
+        break;
+      default:
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    }
+  }
+
+  /** Shade the cells a queued melee attack will strike, in the attacker's team colour. */
   drawStrike(game, u, dir, reach) {
     const { ctx, cell } = this;
     const color = TEAM_COLORS[u.team] ?? '#ffffff';
@@ -199,13 +215,13 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** Dashed ray from a unit to the edge of the grid for a queued shot. */
-  drawShotLine(game, u, dir) {
+  /** Dashed ray from a unit to the edge of the grid (or its range) for a queued shot. */
+  drawShotLine(game, u, dir, range = null) {
     const { ctx } = this;
     const [dx, dy] = DIRS[dir];
     let ex = u.x;
     let ey = u.y;
-    while (game.inBounds(ex + dx, ey + dy)) {
+    for (let d = 1; game.inBounds(ex + dx, ey + dy) && (range === null || d <= range); d++) {
       ex += dx;
       ey += dy;
     }

@@ -1,40 +1,159 @@
-// Unit type registry. A unit's type defines how it moves and attacks.
+// Unit type registry, loaded from JSON (src/data/units.json).
 //
-//   speed       cells per tick when following a move order
-//   orders      which order types the unit accepts
-//   projectile  for shooters: what a shot fires
-//                 speed       cells per tick (projectiles travel in a
-//                             straight line, never steer, and fly until they
-//                             hit a unit or leave the grid)
-//                 directions  allowed firing directions
-//   melee       for thrusters: the strike
-//                 reach       how many cells in a row it hits
-//                 directions  allowed strike directions
+// Adding a unit normally needs no code: add an entry to units.json. The
+// engine, CPU, renderer and debug UI all read behaviour from the definition.
+// Only a brand-new attack *kind* needs code.
+//
+// File format:
+//
+//   {
+//     "default": "pikeman",            unit type used when none is given
+//     "renamed": { "basic": "pikeman" }, old type keys -> current (old saves)
+//     "units": {
+//       "<key>": {
+//         "name":   "Pikeman",          display name                  (required)
+//         "speed":  1,                  cells per tick, 1..MAX_SPEED  (required)
+//         "shape":  "circle",           circle | diamond | square | triangle
+//                                       (default circle)
+//         "attack": { ... }             omit for a unit that can't attack
+//       }
+//     }
+//   }
+//
+// Attack kinds (the unit holds still on the turn it attacks):
+//
+//   "melee"       strikes the `reach` cells in a row next to the unit at the
+//                 end of the tick (t = 1), killing every unit there.
+//                 { "kind": "melee", "reach": 2, "directions": "all" }
+//
+//   "projectile"  fires a projectile from the unit's cell at the start of the
+//                 tick. It flies straight at `speed` cells per tick, never
+//                 steers, and kills the first unit it meets. `range` (cells)
+//                 is optional; leave it out for unlimited range.
+//                 { "kind": "projectile", "speed": 4, "directions": "orthogonal",
+//                   "range": 6 }
+//
+//   "directions" is "all" (8), "orthogonal" (up/down/left/right), "diagonal",
+//   or a list such as ["up", "down-left"].
 
-import { OrderType, ORTHOGONAL, ALL_DIRECTIONS } from './orders.js';
+import data from '../data/units.json' with { type: 'json' };
+import { Directions, ALL_DIRECTIONS, ORTHOGONAL, OrderType } from './orders.js';
 
-export const UnitTypes = Object.freeze({
-  pikeman: Object.freeze({
-    name: 'Pikeman',
-    speed: 1,
-    orders: Object.freeze([OrderType.MOVE, OrderType.THRUST]),
-    melee: Object.freeze({ reach: 2, directions: ALL_DIRECTIONS }),
-  }),
-  gunslinger: Object.freeze({
-    name: 'Gunslinger',
-    speed: 1,
-    orders: Object.freeze([OrderType.MOVE, OrderType.SHOOT]),
-    projectile: Object.freeze({ speed: 4, directions: ORTHOGONAL }),
-  }),
-});
+/** Fastest allowed speed (units and projectiles), in cells per tick. */
+export const MAX_SPEED = 6;
 
-export const DEFAULT_UNIT_TYPE = 'pikeman';
+export const AttackKind = Object.freeze({ MELEE: 'melee', PROJECTILE: 'projectile' });
+export const SHAPES = Object.freeze(['circle', 'diamond', 'square', 'triangle']);
 
-/** Types that no longer exist, mapped to their replacement (for old saves). */
-export const RENAMED_TYPES = Object.freeze({ basic: 'pikeman' });
+const DIAGONAL = Object.freeze(ALL_DIRECTIONS.filter((d) => !ORTHOGONAL.includes(d)));
+const DIRECTION_SETS = { all: ALL_DIRECTIONS, orthogonal: ORTHOGONAL, diagonal: DIAGONAL };
+
+/** Registered unit types by key. Entries are frozen, normalized definitions. */
+export const UnitTypes = {};
+export let DEFAULT_UNIT_TYPE = null;
+export let RENAMED_TYPES = Object.freeze({});
 
 export function getUnitType(type) {
   const def = UnitTypes[type];
   if (!def) throw new Error(`Unknown unit type "${type}"`);
   return def;
 }
+
+/**
+ * Validate one raw JSON unit definition and return the normalized, frozen
+ * definition the engine uses. Throws an Error naming the unit and field.
+ */
+export function defineUnitType(key, raw) {
+  const fail = (msg) => { throw new Error(`Unit type "${key}": ${msg}`); };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) fail('must be an object');
+  checkKeys(raw, ['name', 'speed', 'shape', 'attack'], fail);
+
+  if (typeof raw.name !== 'string' || !raw.name) fail('"name" must be a non-empty string');
+  checkSpeed(raw.speed, '"speed"', fail);
+  const shape = raw.shape ?? 'circle';
+  if (!SHAPES.includes(shape)) fail(`"shape" must be one of ${SHAPES.join(', ')}`);
+
+  let attack = null;
+  if (raw.attack !== undefined) {
+    const a = raw.attack;
+    if (!a || typeof a !== 'object' || Array.isArray(a)) fail('"attack" must be an object');
+    const directions = parseDirections(a.directions, fail);
+    switch (a.kind) {
+      case AttackKind.MELEE:
+        checkKeys(a, ['kind', 'reach', 'directions'], fail, 'attack.');
+        if (!Number.isInteger(a.reach) || a.reach < 1) fail('"attack.reach" must be a positive integer');
+        attack = { kind: a.kind, reach: a.reach, directions };
+        break;
+      case AttackKind.PROJECTILE:
+        checkKeys(a, ['kind', 'speed', 'range', 'directions'], fail, 'attack.');
+        checkSpeed(a.speed, '"attack.speed"', fail);
+        if (a.range !== undefined && (!Number.isInteger(a.range) || a.range < 1)) {
+          fail('"attack.range" must be a positive integer (or left out for unlimited)');
+        }
+        attack = { kind: a.kind, speed: a.speed, range: a.range ?? null, directions };
+        break;
+      default:
+        fail(`"attack.kind" must be one of ${Object.values(AttackKind).join(', ')}`);
+    }
+    Object.freeze(attack);
+  }
+
+  return Object.freeze({
+    key,
+    name: raw.name,
+    speed: raw.speed,
+    shape,
+    attack,
+    orders: Object.freeze(attack ? [OrderType.MOVE, OrderType.ATTACK] : [OrderType.MOVE]),
+  });
+}
+
+/**
+ * Validate a whole units file (see the format above) and register its types,
+ * replacing any with the same key. Validates everything before changing the
+ * registry, so a bad file leaves the current types untouched.
+ */
+export function registerUnitTypes(json) {
+  if (!json || typeof json !== 'object' || !json.units || typeof json.units !== 'object') {
+    throw new Error('Units file must have a "units" object');
+  }
+  const defs = Object.entries(json.units).map(([key, raw]) => defineUnitType(key, raw));
+  const known = new Set([...Object.keys(UnitTypes), ...defs.map((d) => d.key)]);
+  const def = json.default ?? DEFAULT_UNIT_TYPE;
+  if (!known.has(def)) throw new Error(`Default unit type "${def}" is not defined`);
+  const renamed = json.renamed ?? {};
+  for (const [from, to] of Object.entries(renamed)) {
+    if (!known.has(to)) throw new Error(`Renamed type "${from}" points to undefined type "${to}"`);
+  }
+
+  for (const d of defs) UnitTypes[d.key] = d;
+  DEFAULT_UNIT_TYPE = def;
+  RENAMED_TYPES = Object.freeze({ ...RENAMED_TYPES, ...renamed });
+}
+
+function checkKeys(obj, allowed, fail, prefix = '') {
+  for (const k of Object.keys(obj)) {
+    if (!allowed.includes(k)) fail(`unknown field "${prefix}${k}" (allowed: ${allowed.join(', ')})`);
+  }
+}
+
+function checkSpeed(v, label, fail) {
+  if (!Number.isInteger(v) || v < 1 || v > MAX_SPEED) fail(`${label} must be an integer from 1 to ${MAX_SPEED}`);
+}
+
+function parseDirections(spec, fail) {
+  if (typeof spec === 'string') {
+    if (!DIRECTION_SETS[spec]) fail(`"attack.directions" must be ${Object.keys(DIRECTION_SETS).join(', ')} or a list`);
+    return DIRECTION_SETS[spec];
+  }
+  if (Array.isArray(spec) && spec.length > 0) {
+    for (const d of spec) {
+      if (!Object.hasOwn(Directions, d)) fail(`unknown direction "${d}" (use ${ALL_DIRECTIONS.join(', ')})`);
+    }
+    // Keep a canonical order so behaviour doesn't depend on how the list is written.
+    return Object.freeze(ALL_DIRECTIONS.filter((d) => spec.includes(d)));
+  }
+  return fail('"attack.directions" is required');
+}
+
+registerUnitTypes(data);

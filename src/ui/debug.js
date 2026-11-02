@@ -5,9 +5,8 @@
 //                  move(x,y) for the selected unit. Tap the selected unit
 //                  again to deselect.
 //   Attack mode  - tap one of your units to select it, then tap any cell
-//                  (including a target unit) to attack toward it: gunslingers
-//                  shoot() along the dominant axis; pikemen thrust() in the
-//                  nearest of 8 directions.
+//                  (including a target unit) to queue attack() toward it,
+//                  snapped to the nearest direction that unit type allows.
 //   Add mode     - tap an empty cell to spawn a unit of the chosen type.
 //   Speed        - with a unit selected, sets that unit's speed (cells per
 //                  tick); otherwise sets the speed used for new units.
@@ -19,7 +18,7 @@
 // makes the CPU re-plan. "Back" restores the snapshot taken just before the
 // last "End turn", including both sides' staged orders (an exact undo).
 
-import { Game, Teams, MAX_SPEED, move, shoot, thrust, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
+import { Game, Teams, MAX_SPEED, move, attack, Directions, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
 import { Match, MatchStatus } from '../match.js';
 import { Renderer } from './renderer.js';
 import { scenarios } from '../scenarios.js';
@@ -267,9 +266,8 @@ export class DebugUI {
   attackOrder(unit) {
     if (!unit) return null;
     const def = UnitTypes[unit.type];
-    if (def.orders.includes('shoot')) return (x, y) => shoot(directionToward(unit, x, y));
-    if (def.orders.includes('thrust')) return (x, y) => thrust(direction8Toward(unit, x, y));
-    return null;
+    if (!def.attack) return null;
+    return (x, y) => attack(nearestDirection(unit, x, y, def.attack.directions));
   }
 
   tick() {
@@ -440,25 +438,24 @@ function teamClass(u) {
 
 function fmtOrder(o) {
   if (o.type === 'move') return `move(${o.x}, ${o.y})`;
-  if (o.type === 'shoot' || o.type === 'thrust') return `${o.type}(${o.dir})`;
+  if (o.type === 'attack') return `attack(${o.dir})`;
   return o.type;
 }
 
-/** Direction from a unit toward a cell: dominant axis, x on ties. */
-function directionToward(u, x, y) {
-  const dx = x - u.x;
-  const dy = y - u.y;
-  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 'right' : 'left';
-  return dy > 0 ? 'down' : 'up';
-}
+// Tie-break when a tap is exactly between two allowed directions: horizontal first.
+const TAP_PRIORITY = ['right', 'left', 'down', 'up', 'down-right', 'down-left', 'up-right', 'up-left'];
 
-/** Nearest of the 8 directions from a unit toward a cell. */
-function direction8Toward(u, x, y) {
-  const dx = x - u.x;
-  const dy = y - u.y;
-  // Snap the angle to 45° sectors. Screen y grows downward.
-  const sector = Math.round(Math.atan2(dy, dx) / (Math.PI / 4));
-  return ['left', 'up-left', 'up', 'up-right', 'right', 'down-right', 'down', 'down-left', 'left'][sector + 4];
+/** The allowed direction closest in angle to the line from a unit to a cell. */
+function nearestDirection(u, x, y, allowed) {
+  const target = Math.atan2(y - u.y, x - u.x);
+  let best = null;
+  for (const dir of TAP_PRIORITY.filter((d) => allowed.includes(d))) {
+    const [vx, vy] = Directions[dir];
+    let diff = Math.abs(target - Math.atan2(vy, vx));
+    if (diff > Math.PI) diff = 2 * Math.PI - diff;
+    if (!best || diff < best.diff - 1e-9) best = { dir, diff };
+  }
+  return best.dir;
 }
 
 function fmtEvent(e) {
@@ -470,9 +467,9 @@ function fmtEvent(e) {
     case 'shot': return `<div class="shot">#${e.unitId} fired projectile ${e.projectileId} ${e.dir} from ${e.from}</div>`;
     case 'projectileMoved': return `<div class="shot">projectile ${e.projectileId} ${e.path.map((p) => p.join(',')).join(' → ')}</div>`;
     case 'projectileExpired': return `<div class="meta">projectile ${e.projectileId} left the grid @t=${e.time}</div>`;
-    case 'thrust': return `<div class="shot">#${e.unitId} thrust ${e.dir} at ${e.cells.map((c) => c.join(',')).join(' and ') || '(off the board)'}</div>`;
+    case 'strike': return `<div class="shot">#${e.unitId} struck ${e.dir} at ${e.cells.map((c) => c.join(',')).join(' and ') || '(off the board)'}</div>`;
     case 'killed': {
-      const how = e.hits.map((h) => (h.cause === 'thrust' ? `pike of #${h.attackerId}` : `projectile ${h.sourceId} (#${h.attackerId})`)).join(' + ');
+      const how = e.hits.map((h) => (h.cause === 'melee' ? `strike of #${h.attackerId}` : `projectile ${h.sourceId} (#${h.attackerId})`)).join(' + ');
       return `<div class="killed">${e.team === Teams.CPU ? 'CPU' : 'Your'} #${e.unitId} KILLED at ${e.at} by ${how} @t=${e.time}</div>`;
     }
     default: return `<div class="meta">${e.type} ${JSON.stringify(e)}</div>`;
