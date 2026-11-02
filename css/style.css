@@ -60,7 +60,8 @@ html, body {
 .hint.error { color: var(--warn); }
 
 .row { display: flex; gap: 8px; align-items: center; }
-.row > * { flex: 1; }
+.row > * { flex: 1; min-width: 0; }
+select { text-overflow: ellipsis; }
 
 button, select {
   min-height: 44px; /* Apple's minimum touch target */
@@ -82,6 +83,11 @@ button.on { border-color: var(--ok); color: var(--ok); }
 .segmented button:first-child { border-radius: 8px 0 0 8px; }
 .segmented button:last-child { border-radius: 0 8px 8px 0; }
 .segmented button.active { background: var(--line); border-color: var(--accent); }
+
+.speed-row { gap: 10px; }
+.speed-row .label { flex: 0 0 auto; color: var(--muted); }
+.speed-row .segmented { display: flex; flex: 1; }
+.speed-row .segmented button { flex: 1; min-width: 0; padding: 0; }
 
 .toggle { display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--muted); }
 .toggle input { width: 20px; height: 20px; }

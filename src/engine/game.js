@@ -9,9 +9,12 @@
 import { validateOrder, OrderType } from './orders.js';
 import { resolveMoves } from './resolve.js';
 
+/** Fastest allowed unit speed, in cells per tick. */
+export const MAX_SPEED = 6;
+
 export class Game {
   /**
-   * @param {{width:number,height:number,units?:Array<{x:number,y:number,id?:number}>}} opts
+   * @param {{width:number,height:number,units?:Array<{x:number,y:number,id?:number,speed?:number}>}} opts
    */
   constructor({ width, height, units = [] }) {
     if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
@@ -26,7 +29,7 @@ export class Game {
       units: [], // kept sorted by id
       queue: [], // [{ unitId, order }]
     };
-    for (const u of units) this.addUnit(u.x, u.y, u.id);
+    for (const u of units) this.addUnit(u.x, u.y, u.id, { speed: u.speed });
   }
 
   // ---- snapshots ---------------------------------------------------------
@@ -36,7 +39,10 @@ export class Game {
     game.state = structuredClone(snapshot);
     // Snapshots from before order sequencing existed.
     game.state.nextOrderSeq ??= 1;
-    for (const u of game.state.units) u.orderSeq ??= null;
+    for (const u of game.state.units) {
+      u.orderSeq ??= null;
+      u.speed ??= 1;
+    }
     return game;
   }
 
@@ -70,17 +76,31 @@ export class Game {
 
   // ---- mutation (between ticks) -------------------------------------------
 
-  addUnit(x, y, id) {
+  /**
+   * @param {number} x
+   * @param {number} y
+   * @param {number} [id] defaults to the next free id
+   * @param {{speed?:number}} [opts] speed: cells moved per tick (1..MAX_SPEED)
+   */
+  addUnit(x, y, id, { speed = 1 } = {}) {
     if (!this.inBounds(x, y)) throw new Error(`Cell ${x},${y} is out of bounds`);
+    validateSpeed(speed);
     if (this.unitAt(x, y)) throw new Error(`Cell ${x},${y} is occupied`);
     const unitId = id ?? this.state.nextUnitId;
     if (this.getUnit(unitId)) throw new Error(`Unit id ${unitId} already exists`);
     this.state.nextUnitId = Math.max(this.state.nextUnitId, unitId + 1);
     // orderSeq: when the current order was applied (lower = given earlier).
-    const unit = { id: unitId, x, y, order: null, orderSeq: null };
+    const unit = { id: unitId, x, y, speed, order: null, orderSeq: null };
     this.state.units.push(unit);
     this.state.units.sort((a, b) => a.id - b.id);
     return unit;
+  }
+
+  setSpeed(id, speed) {
+    const unit = this.getUnit(id);
+    if (!unit) throw new Error(`No unit with id ${id}`);
+    validateSpeed(speed);
+    unit.speed = speed;
   }
 
   removeUnit(id) {
@@ -107,13 +127,21 @@ export class Game {
   // ---- simulation --------------------------------------------------------
 
   /**
-   * Advance the simulation by one step:
+   * Advance the simulation by one tick:
    *   1. apply queued orders to units (in queue order),
-   *   2. every unit with a move order picks the next cell toward its target,
-   *   3. resolve all moves simultaneously (see resolve.js): whoever got to a
-   *      cell first keeps it and the colliding unit doesn't move,
-   *   4. units that reached their target drop the order.
-   * Returns a list of events describing what happened.
+   *   2. move units. A unit with speed s takes one step at each of the times
+   *      1/s, 2/s, ..., s/s within the tick. Every distinct time is a
+   *      "sub-step": all units stepping at that instant pick their next cell
+   *      toward their target and are resolved together with the same
+   *      single-step collision rules (see resolve.js). Units not stepping at
+   *      that instant stand still and so hold their cells. This keeps "whoever
+   *      got to a cell first keeps it" true in real time: a faster unit
+   *      genuinely arrives earlier, and no unit can jump over another.
+   *      A unit blocked at one of its sub-steps retries at its next one.
+   *   3. units that reached their target drop the order.
+   * Returns a list of events describing what happened. Each unit produces at
+   * most one "moved" event (with the full path taken) and at most one
+   * "blocked" event (the first time it was blocked this tick).
    */
   tick() {
     const s = this.state;
@@ -132,24 +160,41 @@ export class Game {
     }
     s.queue = [];
 
-    // 2. Intents.
-    const intents = s.units.map((u) => {
-      const next = nextStep(u);
-      return { id: u.id, x: u.x, y: u.y, tx: next.x, ty: next.y, priority: u.orderSeq };
-    });
+    // 2. Sub-steps. With L = lcm of all speeds, sub-step j (1..L) happens at
+    //    time j/L; a unit of speed v steps when j is a multiple of L/v.
+    //    Integer arithmetic only, so it is exact and deterministic.
+    const L = s.units.reduce((acc, u) => lcm(acc, u.speed), 1);
+    const paths = new Map(s.units.map((u) => [u.id, [[u.x, u.y]]]));
+    const firstBlock = new Map();
+    for (let j = 1; j <= L; j++) {
+      const intents = s.units.map((u) => {
+        const steps = j % (L / u.speed) === 0;
+        const next = steps ? nextStep(u) : { x: u.x, y: u.y };
+        return { id: u.id, x: u.x, y: u.y, tx: next.x, ty: next.y, priority: u.orderSeq };
+      });
+      if (intents.every((it) => it.tx === it.x && it.ty === it.y)) continue;
+      const outcome = resolveMoves(intents);
+      for (const u of s.units) {
+        const r = outcome.get(u.id);
+        if (r.moved) {
+          u.x = r.x;
+          u.y = r.y;
+          paths.get(u.id).push([u.x, u.y]);
+        } else if (r.blocked && !firstBlock.has(u.id)) {
+          firstBlock.set(u.id, { at: [u.x, u.y], ...r.blocked, time: fraction(j, L) });
+        }
+      }
+    }
 
-    // 3. Resolve.
-    const outcome = resolveMoves(intents);
-
-    // 4. Apply results.
+    // 3. Report and clear finished orders.
     for (const u of s.units) {
-      const r = outcome.get(u.id);
-      if (r.moved) {
-        events.push({ type: 'moved', unitId: u.id, from: [u.x, u.y], to: [r.x, r.y] });
-        u.x = r.x;
-        u.y = r.y;
-      } else if (r.blocked) {
-        events.push({ type: 'blocked', unitId: u.id, at: [u.x, u.y], reason: r.blocked.reason, by: r.blocked.by });
+      const path = paths.get(u.id);
+      if (path.length > 1) {
+        events.push({ type: 'moved', unitId: u.id, from: path[0], to: path[path.length - 1], path });
+      }
+      const b = firstBlock.get(u.id);
+      if (b) {
+        events.push({ type: 'blocked', unitId: u.id, at: b.at, reason: b.reason, by: b.by, time: b.time });
       }
       if (u.order?.type === OrderType.MOVE && u.x === u.order.x && u.y === u.order.y) {
         events.push({ type: 'arrived', unitId: u.id, at: [u.x, u.y] });
@@ -168,10 +213,31 @@ export class Game {
   }
 }
 
+function validateSpeed(speed) {
+  if (!Number.isInteger(speed) || speed < 1 || speed > MAX_SPEED) {
+    throw new Error(`Speed must be an integer from 1 to ${MAX_SPEED}`);
+  }
+}
+
+function gcd(a, b) {
+  while (b) [a, b] = [b, a % b];
+  return a;
+}
+
+/** j/L as a reduced fraction string, e.g. "1/2", or "1" for a whole tick. */
+function fraction(j, L) {
+  const g = gcd(j, L);
+  return L / g === 1 ? String(j / g) : `${j / g}/${L / g}`;
+}
+
+function lcm(a, b) {
+  return (a / gcd(a, b)) * b;
+}
+
 /**
- * The cell a unit wants to enter this tick. Moves one cell orthogonally,
+ * The cell a unit wants to enter on its next step. Moves one cell orthogonally,
  * closing the larger axis gap first (x on ties). No pathfinding yet: a
- * blocked unit simply tries again next tick.
+ * blocked unit simply tries again on its next step.
  */
 export function nextStep(unit) {
   const o = unit.order;

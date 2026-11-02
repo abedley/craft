@@ -91,10 +91,7 @@ export class Renderer {
 
     // Preview of the next tick.
     if (preview) {
-      for (const [id, to] of preview.moved) {
-        const u = game.getUnit(id);
-        if (u) this.drawArrow(u.x, u.y, to[0], to[1], COLORS.preview);
-      }
+      for (const path of preview.moved.values()) this.drawPathArrow(path, COLORS.preview);
     }
 
     // Units.
@@ -126,7 +123,25 @@ export class Renderer {
       }
       ctx.fillStyle = COLORS.label;
       ctx.fillText(String(u.id), cx, cy + 1);
+      if (u.speed > 1) this.drawSpeedBadge(cx + r * 0.75, cy - r * 0.75, u.speed);
     }
+  }
+
+  drawSpeedBadge(x, y, speed) {
+    const { ctx, cell } = this;
+    const br = cell * 0.15;
+    ctx.fillStyle = COLORS.label;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(x, y, br, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.save();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `700 ${Math.round(cell * 0.2)}px -apple-system, system-ui, sans-serif`;
+    ctx.fillText(String(speed), x, y + 1);
+    ctx.restore();
   }
 
   drawOrderLine(u, order, color, dashed) {
@@ -149,10 +164,13 @@ export class Renderer {
     ctx.stroke();
   }
 
-  drawArrow(x0, y0, x1, y1, color) {
+  /** Polyline through cell centers with an arrowhead on the last segment. */
+  drawPathArrow(path, color) {
+    if (path.length < 2) return;
     const { ctx, cell } = this;
-    const [ax, ay] = this.center(x0, y0);
-    const [bx, by] = this.center(x1, y1);
+    const pts = path.map(([x, y]) => this.center(x, y));
+    const [ax, ay] = pts[pts.length - 2];
+    const [bx, by] = pts[pts.length - 1];
     const ang = Math.atan2(by - ay, bx - ax);
     const tipX = bx - Math.cos(ang) * cell * 0.2;
     const tipY = by - Math.sin(ang) * cell * 0.2;
@@ -160,8 +178,10 @@ export class Renderer {
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     ctx.lineWidth = 3;
+    ctx.lineJoin = 'round';
     ctx.beginPath();
-    ctx.moveTo(ax, ay);
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let k = 1; k < pts.length - 1; k++) ctx.lineTo(pts[k][0], pts[k][1]);
     ctx.lineTo(tipX, tipY);
     ctx.stroke();
     ctx.beginPath();

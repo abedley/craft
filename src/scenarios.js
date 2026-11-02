@@ -54,6 +54,34 @@ export const scenarios = {
     return g;
   },
 
+  'Fast arrives first': () => {
+    // Unit 2 is ordered first, but speed-3 unit 1 reaches (3,3) at t=2/3,
+    // before unit 2 gets there at t=1, so unit 1 keeps it.
+    const g = new Game({ width: SIZE, height: SIZE, units: [{ x: 1, y: 3, speed: 3 }, { x: 4, y: 3 }] });
+    g.queueOrder(2, move(3, 3));
+    g.queueOrder(1, move(3, 3));
+    return g;
+  },
+
+  'Fast behind slow': () => {
+    const g = new Game({ width: SIZE, height: SIZE, units: [{ x: 0, y: 3, speed: 3 }, { x: 1, y: 3 }] });
+    g.queueOrder(1, move(7, 3));
+    g.queueOrder(2, move(7, 3));
+    return g;
+  },
+
+  'Mixed speeds': () => {
+    const g = new Game({
+      width: SIZE, height: SIZE,
+      units: [{ x: 0, y: 0, speed: 3 }, { x: 7, y: 0, speed: 2 }, { x: 0, y: 7 }, { x: 7, y: 7, speed: 4 }],
+    });
+    g.queueOrder(1, move(7, 7));
+    g.queueOrder(2, move(0, 7));
+    g.queueOrder(3, move(7, 0));
+    g.queueOrder(4, move(0, 0));
+    return g;
+  },
+
   'Crossroads': () => {
     const g = new Game({
       width: SIZE, height: SIZE,

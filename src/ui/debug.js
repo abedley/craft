@@ -4,12 +4,14 @@
 //   Order mode   - tap a unit to select it, tap an empty cell to queue
 //                  move(x,y) for the selected unit. Tap the selected unit
 //                  again to deselect.
-//   Add mode     - tap an empty cell to spawn a unit.
+//   Add mode     - tap an empty cell to spawn a unit at the chosen speed.
+//   Speed        - with a unit selected, sets that unit's speed (cells per
+//                  tick); otherwise sets the speed used for new units.
 //   Remove mode  - tap a unit to delete it.
 // "Tick" runs one engine step. "Back" restores the snapshot before the last
 // tick (the engine is deterministic, so this is an exact undo).
 
-import { Game, move } from '../engine/index.js';
+import { Game, MAX_SPEED, move } from '../engine/index.js';
 import { Renderer } from './renderer.js';
 import { scenarios } from '../scenarios.js';
 
@@ -25,8 +27,10 @@ export class DebugUI {
     this.log = []; // [{ tick, events }]
     this.autoTimer = null;
     this.tab = 'queue';
+    this.newUnitSpeed = 1;
 
     this.populateScenarios();
+    this.populateSpeeds();
     this.bind();
     this.loadScenario(Object.keys(scenarios)[1]);
     this.renderer.resize(this.game);
@@ -43,6 +47,28 @@ export class DebugUI {
       opt.textContent = name;
       sel.append(opt);
     }
+  }
+
+  populateSpeeds() {
+    const wrap = $('#speed');
+    for (let v = 1; v <= MAX_SPEED; v++) {
+      const btn = document.createElement('button');
+      btn.textContent = String(v);
+      btn.dataset.speed = String(v);
+      btn.addEventListener('click', () => this.onSpeedTap(v));
+      wrap.append(btn);
+    }
+  }
+
+  onSpeedTap(v) {
+    if (this.selectedId !== null) {
+      this.game.setSpeed(this.selectedId, v);
+      this.hint(`Unit ${this.selectedId} speed set to ${v}.`);
+    } else {
+      this.newUnitSpeed = v;
+      this.hint(`New units will have speed ${v}.`);
+    }
+    this.render();
   }
 
   bind() {
@@ -120,8 +146,8 @@ export class DebugUI {
       switch (this.mode) {
         case 'add':
           if (unit) return this.hint(`Cell ${x},${y} is occupied.`, true);
-          this.game.addUnit(x, y);
-          this.hint(`Added unit at ${x},${y}.`);
+          this.game.addUnit(x, y, undefined, { speed: this.newUnitSpeed });
+          this.hint(`Added speed-${this.newUnitSpeed} unit at ${x},${y}.`);
           break;
         case 'remove':
           if (!unit) return;
@@ -230,7 +256,7 @@ export class DebugUI {
     const moved = new Map();
     const blocked = new Map();
     for (const e of events) {
-      if (e.type === 'moved') moved.set(e.unitId, e.to);
+      if (e.type === 'moved') moved.set(e.unitId, e.path);
       if (e.type === 'blocked') blocked.set(e.unitId, e.reason);
     }
     return { moved, blocked };
@@ -242,6 +268,8 @@ export class DebugUI {
     $('#queue-count').textContent = g.queue.length;
     $('#hash').textContent = g.hash();
     $('#btn-back').disabled = this.history.length === 0;
+    const shownSpeed = this.selectedId !== null ? g.getUnit(this.selectedId)?.speed : this.newUnitSpeed;
+    document.querySelectorAll('[data-speed]').forEach((b) => b.classList.toggle('active', Number(b.dataset.speed) === shownSpeed));
     this.renderer.draw(g, { selectedId: this.selectedId, preview: this.computePreview() });
     this.renderPanel();
   }
@@ -272,7 +300,7 @@ export class DebugUI {
       case 'units': {
         const el = $('#tab-units');
         el.innerHTML = g.units.length
-          ? g.units.map((u) => `<div>#${u.id} @ ${u.x},${u.y} ${u.order ? fmtOrder(u.order) : '<span class="meta">idle</span>'}</div>`).join('')
+          ? g.units.map((u) => `<div>#${u.id} @ ${u.x},${u.y} spd ${u.speed} ${u.order ? fmtOrder(u.order) : '<span class="meta">idle</span>'}</div>`).join('')
           : '<div class="empty">No units.</div>';
         break;
       }
@@ -291,8 +319,8 @@ function fmtOrder(o) {
 
 function fmtEvent(e) {
   switch (e.type) {
-    case 'moved': return `<div class="moved">#${e.unitId} ${e.from} → ${e.to}</div>`;
-    case 'blocked': return `<div class="blocked">#${e.unitId} blocked at ${e.at} (${e.reason}${e.by != null ? ` by #${e.by}` : ''})</div>`;
+    case 'moved': return `<div class="moved">#${e.unitId} ${e.path.map((p) => p.join(',')).join(' → ')}</div>`;
+    case 'blocked': return `<div class="blocked">#${e.unitId} blocked at ${e.at} (${e.reason}${e.by != null ? ` by #${e.by}` : ''}${e.time ? ` @t=${e.time}` : ''})</div>`;
     case 'arrived': return `<div class="arrived">#${e.unitId} arrived at ${e.at}</div>`;
     case 'orderApplied': return `<div class="meta">#${e.unitId} ← ${fmtOrder(e.order)}</div>`;
     default: return `<div class="meta">${e.type} ${JSON.stringify(e)}</div>`;
