@@ -1,7 +1,7 @@
 // Canvas renderer for the board. Purely a view: it reads game state and
 // draws; it never mutates the game.
 
-import { Directions as DIRS } from '../engine/index.js';
+import { Directions as DIRS, UnitTypes, strikeCells } from '../engine/index.js';
 
 const COLORS = {
   grid: '#2b323c',
@@ -96,6 +96,8 @@ export class Renderer {
         this.drawOrderLine(u, order, color, !!pending);
       } else if (order.type === 'shoot') {
         this.drawShotLine(game, u, order.dir);
+      } else if (order.type === 'thrust') {
+        this.drawStrike(game, u, order.dir, UnitTypes[u.type].melee.reach);
       }
     }
 
@@ -115,7 +117,7 @@ export class Renderer {
       ctx.fillStyle = unitColor(u);
       ctx.beginPath();
       if (u.type === 'gunslinger') {
-        // Gunslingers are diamonds so they read differently from basic units.
+        // Gunslingers are diamonds; pikemen are circles.
         ctx.moveTo(cx, cy - r * 1.15);
         ctx.lineTo(cx + r * 1.15, cy);
         ctx.lineTo(cx, cy + r * 1.15);
@@ -162,6 +164,39 @@ export class Renderer {
       ctx.arc(cx, cy, cell * 0.11, 0, Math.PI * 2);
       ctx.fill();
     }
+  }
+
+  /** Shade the cells a queued thrust will strike, in the attacker's team colour. */
+  drawStrike(game, u, dir, reach) {
+    const { ctx, cell } = this;
+    const color = TEAM_COLORS[u.team] ?? '#ffffff';
+    const [ax, ay] = this.center(u.x, u.y);
+    const cells = strikeCells(u, dir, reach).filter(([x, y]) => game.inBounds(x, y));
+    ctx.save();
+    for (const [x, y] of cells) {
+      const px = this.ox + x * cell;
+      const py = this.oy + y * cell;
+      ctx.globalAlpha = 0.28;
+      ctx.fillStyle = color;
+      ctx.fillRect(px + 2, py + 2, cell - 4, cell - 4);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(px + 3, py + 3, cell - 6, cell - 6);
+      ctx.setLineDash([]);
+    }
+    // The pike itself: a line from the unit through the struck cells.
+    if (cells.length) {
+      const [bx, by] = this.center(...cells[cells.length - 1]);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   /** Dashed ray from a unit to the edge of the grid for a queued shot. */

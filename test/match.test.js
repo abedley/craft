@@ -54,14 +54,16 @@ test('clearing player orders keeps the CPU plan', () => {
 });
 
 test('CPU wins a same-instant contest because it ordered first', () => {
-  // Both units are one step from (1,1) and step into it at the same instant.
-  const g = new Game({ width: 3, height: 3, units: [{ x: 0, y: 1 }, { x: 2, y: 1, team: C }] });
+  // The CPU gunslinger has no shot yet; its nearest firing cell is (2,1).
+  // The player's pikeman steps into (2,1) at the same instant.
+  const g = new Game({ width: 3, height: 3, units: [{ x: 1, y: 1 }, { x: 2, y: 2, type: G, team: C }] });
   const m = new Match(g);
-  m.startTurn(); // CPU basic heads for the player: first step is (1,1)
-  m.playerOrder(1, move(1, 1));
+  m.startTurn();
+  assert.deepEqual(g.queue[0], { unitId: 2, order: move(2, 1) });
+  m.playerOrder(1, move(2, 1));
   m.endTurn();
-  assert.deepEqual([g.getUnit(2).x, g.getUnit(2).y], [1, 1]);
-  assert.deepEqual([g.getUnit(1).x, g.getUnit(1).y], [0, 1]);
+  assert.deepEqual([g.getUnit(2).x, g.getUnit(2).y], [2, 1]);
+  assert.deepEqual([g.getUnit(1).x, g.getUnit(1).y], [1, 1]);
 });
 
 test('CPU gunslinger shoots an enemy in line, but not through a teammate', () => {
@@ -116,7 +118,7 @@ test('match status: won, lost, draw', () => {
   const won = new Match(new Game({ width: 5, height: 1, units: [{ x: 0, y: 0, type: G }, { x: 4, y: 0, team: C }] }));
   won.startTurn();
   won.playerOrder(1, shoot('right'));
-  // The CPU's basic unit walks toward us into our shot.
+  // The CPU pikeman walks toward us into our shot.
   won.endTurn();
   assert.equal(won.status, MatchStatus.WON);
   assert.throws(() => won.playerOrder(1, move(1, 0)), /over/);

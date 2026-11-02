@@ -8,7 +8,7 @@
 
 import { validateOrder, OrderType, Directions } from './orders.js';
 import { resolveMoves } from './resolve.js';
-import { getUnitType, DEFAULT_UNIT_TYPE } from './unitTypes.js';
+import { getUnitType, DEFAULT_UNIT_TYPE, RENAMED_TYPES } from './unitTypes.js';
 
 /** Sides. Friendly fire is on: projectiles hit any unit regardless of team. */
 export const Teams = Object.freeze({ PLAYER: 'player', CPU: 'cpu' });
@@ -51,6 +51,7 @@ export class Game {
     for (const u of game.state.units) {
       u.orderSeq ??= null;
       u.type ??= DEFAULT_UNIT_TYPE;
+      u.type = RENAMED_TYPES[u.type] ?? u.type;
       u.team ??= Teams.PLAYER;
       u.speed ??= getUnitType(u.type).speed;
     }
@@ -93,7 +94,7 @@ export class Game {
    * @param {number} y
    * @param {number} [id] defaults to the next free id
    * @param {{type?:string, team?:string, speed?:number}} [opts]
-   *   type: key of UnitTypes (default "basic").
+   *   type: key of UnitTypes (default "pikeman").
    *   team: Teams.PLAYER (default) or Teams.CPU.
    *   speed: cells per tick; defaults to the type's speed. Overriding it is
    *   meant for debugging/tests.
@@ -157,6 +158,8 @@ export class Game {
    *    - move: becomes the unit's standing order.
    *    - shoot: fires a projectile from the unit's cell right away and
    *      cancels any move order; the unit holds still this tick.
+   *    - thrust: the unit holds still and strikes at the END of the tick
+   *      (see 2e); it cancels any move order.
    *
    * 2. Run the tick as a sequence of instants ("sub-steps"). Anything with
    *    speed v (units and projectiles) takes one step at each of the times
@@ -177,6 +180,11 @@ export class Game {
    *         and removed at once, freeing its cell; the projectile is used up.
    *         Projectiles don't interact with each other.
    *      d. Projectiles that left the grid are removed.
+   *      e. At the last instant (t = 1) only, at the same moment as that
+   *         instant's projectile hits: each thrusting unit still alive kills
+   *         every unit in the `reach` cells in a row next to it in its
+   *         direction (friendly fire included). Units that left those cells
+   *         earlier escape; units that walked in get hit.
    *    A unit blocked at one of its sub-steps retries at its next one.
    *
    * 3. Units that reached their target drop their order.
@@ -190,6 +198,7 @@ export class Game {
     const events = [];
 
     // 1. Apply queued orders: last one per unit wins.
+    const thrusts = []; // [{ unitId, dir }], struck at t = 1
     const lastIndex = new Map();
     s.queue.forEach((q, i) => lastIndex.set(q.unitId, i));
     s.queue.forEach(({ unitId, order }, i) => {
@@ -214,6 +223,10 @@ export class Game {
         };
         s.projectiles.push(p);
         events.push({ type: 'shot', unitId: unit.id, projectileId: p.id, dir: p.dir, from: [p.x, p.y] });
+      } else if (order.type === OrderType.THRUST) {
+        unit.order = null;
+        unit.orderSeq = null;
+        thrusts.push({ unitId: unit.id, dir: order.dir });
       } else {
         unit.order = order;
         unit.orderSeq = s.nextOrderSeq++;
@@ -279,15 +292,44 @@ export class Game {
         }
         if (victim) hits.push([p, victim]);
       }
-      const killed = new Map(); // unit id -> projectile ids that hit it
+      const killed = new Map(); // unit id -> [{ cause, sourceId, attackerId }]
+      const addKill = (victimId, hit) => {
+        if (!killed.has(victimId)) killed.set(victimId, []);
+        killed.get(victimId).push(hit);
+      };
       for (const [p, victim] of hits) {
-        if (!killed.has(victim.id)) killed.set(victim.id, []);
-        killed.get(victim.id).push(p.id);
+        addKill(victim.id, { cause: 'projectile', sourceId: p.id, attackerId: p.ownerId });
       }
-      for (const [unitId, by] of [...killed].sort((a, b) => a[0] - b[0])) {
+
+      // e. Thrusts land at the end of the tick, simultaneously with this
+      //    instant's projectile hits (a pikeman shot at t=1 still strikes).
+      if (j === L) {
+        for (const t of thrusts) {
+          const attacker = this.getUnit(t.unitId);
+          if (!attacker) continue; // killed earlier this tick
+          const cells = strikeCells(attacker, t.dir, getUnitType(attacker.type).melee.reach);
+          events.push({ type: 'thrust', unitId: attacker.id, dir: t.dir, cells: cells.filter(([x, y]) => this.inBounds(x, y)) });
+          for (const [x, y] of cells) {
+            const victim = this.unitAt(x, y);
+            if (victim) addKill(victim.id, { cause: 'thrust', sourceId: attacker.id, attackerId: attacker.id });
+          }
+        }
+      }
+
+      for (const [unitId, hitsOn] of [...killed].sort((a, b) => a[0] - b[0])) {
         const u = this.getUnit(unitId);
-        const p = s.projectiles.find((q) => q.id === by[0]);
-        events.push({ type: 'killed', unitId, team: u.team, at: [u.x, u.y], by, shooterId: p.ownerId, time });
+        const shots = hitsOn.filter((h) => h.cause === 'projectile');
+        events.push({
+          type: 'killed',
+          unitId,
+          team: u.team,
+          at: [u.x, u.y],
+          time,
+          hits: hitsOn,
+          // Shortcuts for projectile kills.
+          by: shots.map((h) => h.sourceId),
+          shooterId: shots[0]?.attackerId ?? null,
+        });
       }
       const spent = new Set(hits.map(([p]) => p.id));
       s.units = s.units.filter((u) => !killed.has(u.id));
@@ -334,6 +376,14 @@ export class Game {
   }
 }
 
+
+/** The `reach` cells in a row next to a unit in a direction. */
+export function strikeCells(unit, dir, reach) {
+  const [dx, dy] = Directions[dir];
+  const cells = [];
+  for (let k = 1; k <= reach; k++) cells.push([unit.x + dx * k, unit.y + dy * k]);
+  return cells;
+}
 
 function validateSpeed(speed) {
   if (!Number.isInteger(speed) || speed < 1 || speed > MAX_SPEED) {

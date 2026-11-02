@@ -33,6 +33,9 @@ test/                 node:test suites for the engine
 
 ## Turns and teams
 
+**The CPU's plan is visible, and that is a core mechanic:** the CPU commits to its orders first and you
+see all of them (pink lines, shot rays and strike zones, plus the Queue tab) before you decide.
+
 The game is played by two teams: the player (blue) and the CPU (pink). Every unit has a `team`
 (`'player'` default, or `'cpu'`). **Friendly fire is on**: projectiles hit whatever unit is in their way.
 
@@ -54,10 +57,14 @@ Deterministic: same board, same plan. For each CPU unit in id order:
 
 1. **Dodge** an incoming projectile that would reach it within two ticks with nothing in between, if
    it can still step out of the line in time.
-2. **Shoot** (gunslingers) if the first unit in some direction is an enemy, nearest first. It never
-   shoots when a teammate is first in line.
+2. **Attack**:
+   - Gunslingers shoot if the first unit in some direction is an enemy, nearest first, and never when a
+     teammate is first in line.
+   - Pikemen thrust in the direction that catches the most enemies, as the board stands now. They
+     never thrust when a teammate stands in the strike, or is planned (earlier in the CPU's own plan)
+     to step into it.
 3. **Move**: gunslingers head for the nearest free cell with a clear straight shot at an enemy;
-   everyone else walks toward the nearest enemy.
+   pikemen walk toward the nearest enemy.
 
 ## Engine model
 
@@ -98,15 +105,31 @@ single-step collision rules below, while everyone else stands still and holds th
 
 ### Unit types
 
-| Type | Speed | Orders | Notes |
+| Type | Speed | Orders | Attack |
 | --- | --- | --- | --- |
-| `basic` | 1 | move | default type |
-| `gunslinger` | 1 | move, shoot | projectile speed 4 |
+| `pikeman` (default) | 1 | move, thrust | kills the 2 cells in a row next to it, any of 8 directions, at the end of the tick |
+| `gunslinger` | 1 | move, shoot | projectile, 4 directions, speed 4, unlimited range |
+
+(Older saves with `basic` units load them as pikemen.)
 
 `new Game({ units: [{ x, y, type: 'gunslinger' }] })` or `game.addUnit(x, y, id, { type })`. A unit's
 speed starts at its type's speed; `speed` / `setSpeed` override it (for debugging and tests).
 
 ### Combat
+
+**Thrust** (`thrust(dir)`, `dir` is `up`, `down`, `left`, `right`, `up-left`, `up-right`, `down-left`,
+`down-right`):
+
+- The pikeman holds still that tick (any move order is cancelled) and strikes at the **end of the
+  tick** (t = 1). Every unit in the 2 cells in a row next to it in that direction dies, teammates
+  included.
+- Because it lands at the end, a unit that steps out of the zone during the tick escapes, and a unit
+  that walks into it is hit. Combined with the visible CPU plan, you can dodge a CPU thrust or aim yours
+  where a CPU unit is heading.
+- It happens at the same instant as any projectile hits at t = 1: a pikeman shot at t = 1 still strikes,
+  but one killed earlier in the tick doesn't. Two pikemen thrusting at each other both die.
+
+**Shoot**:
 
 - `shoot(dir)` with `dir` one of `up`, `down`, `left`, `right`. The projectile spawns in the shooter's
   cell at the start of the tick. Shooting cancels the shooter's move order, and the shooter stays put
@@ -147,10 +170,12 @@ UI header, so two runs with the same orders can be compared at a glance.
   lines, listed first in the Queue tab); tap **End turn** when your orders are in. The header shows
   YOU WIN / YOU LOSE / DRAW when a side is wiped out.
 - **Move** mode: tap one of your units to select it, tap an empty cell to queue `move(x, y)`.
-- **Shoot** mode: tap a gunslinger, then tap any cell or unit to shoot toward it (dominant axis).
+- **Attack** mode: tap one of your units, then tap any cell or unit to attack toward it. Gunslingers
+  shoot along the dominant axis; pikemen thrust in the nearest of 8 directions. Queued thrusts shade the
+  struck cells in the team's colour.
 - **Add** / **Remove** modes edit the board (the CPU re-plans after edits). The type and team pickers
   set what gets added.
-  Gunslingers are drawn as diamonds, basic units as circles.
+  Gunslingers are drawn as diamonds, pikemen as circles.
 - **Speed** sets the selected unit's speed, or the speed for newly added units when none is selected.
   Units faster than 1 show their speed in a small badge.
 - Projectiles are orange dots with a tail. Queued shots show as a dotted orange ray.

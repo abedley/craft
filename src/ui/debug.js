@@ -4,9 +4,10 @@
 //   Move mode    - tap a unit to select it, tap an empty cell to queue
 //                  move(x,y) for the selected unit. Tap the selected unit
 //                  again to deselect.
-//   Shoot mode   - tap a unit that can shoot to select it, then tap any cell
-//                  (including a target unit) to queue shoot() in the
-//                  direction of that cell (dominant axis, x on ties).
+//   Attack mode  - tap one of your units to select it, then tap any cell
+//                  (including a target unit) to attack toward it: gunslingers
+//                  shoot() along the dominant axis; pikemen thrust() in the
+//                  nearest of 8 directions.
 //   Add mode     - tap an empty cell to spawn a unit of the chosen type.
 //   Speed        - with a unit selected, sets that unit's speed (cells per
 //                  tick); otherwise sets the speed used for new units.
@@ -18,7 +19,7 @@
 // makes the CPU re-plan. "Back" restores the snapshot taken just before the
 // last "End turn", including both sides' staged orders (an exact undo).
 
-import { Game, Teams, MAX_SPEED, move, shoot, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
+import { Game, Teams, MAX_SPEED, move, shoot, thrust, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
 import { Match, MatchStatus } from '../match.js';
 import { Renderer } from './renderer.js';
 import { scenarios } from '../scenarios.js';
@@ -185,12 +186,12 @@ export class DebugUI {
     this.mode = mode;
     document.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
     if (mode === 'add' || mode === 'remove') this.selectedId = null;
-    if (mode === 'shoot' && this.selectedId !== null && !this.canShoot(this.game.getUnit(this.selectedId))) {
+    if (mode === 'attack' && this.selectedId !== null && !this.attackOrder(this.game.getUnit(this.selectedId))) {
       this.selectedId = null;
     }
     this.hint({
       move: 'Tap a unit to select it, then tap a cell to queue a move.',
-      shoot: 'Tap a gunslinger, then tap a cell or unit to shoot toward it.',
+      attack: 'Tap one of your units, then tap a cell or unit to attack toward it.',
       add: 'Tap an empty cell to add a unit.',
       remove: 'Tap a unit to remove it.',
     }[mode]);
@@ -220,23 +221,23 @@ export class DebugUI {
           this.replanCpu();
           this.hint(`Removed unit ${unit.id}.`);
           break;
-        case 'shoot': {
+        case 'attack': {
           const sel = this.selectedId !== null ? this.game.getUnit(this.selectedId) : null;
           if (unit && unit.id === this.selectedId) {
             this.selectedId = null;
             this.hint('Deselected.');
-          } else if (sel && this.canShoot(sel)) {
-            const dir = directionToward(sel, x, y);
-            this.match.playerOrder(sel.id, shoot(dir));
-            this.hint(`Queued: unit ${sel.id} shoot(${dir}).`);
+          } else if (sel && this.attackOrder(sel)) {
+            const order = this.attackOrder(sel)(x, y);
+            this.match.playerOrder(sel.id, order);
+            this.hint(`Queued: unit ${sel.id} ${fmtOrder(order)}.`);
           } else if (unit && unit.team === Teams.CPU) {
             this.hint(`Unit ${unit.id} is a CPU unit.`, true);
             return;
-          } else if (unit && this.canShoot(unit)) {
+          } else if (unit && this.attackOrder(unit)) {
             this.selectedId = unit.id;
-            this.hint(`Unit ${unit.id} selected. Tap a cell to shoot toward it.`);
+            this.hint(`Unit ${unit.id} selected. Tap a cell to attack toward it.`);
           } else if (unit) {
-            this.hint(`Unit ${unit.id} (${UnitTypes[unit.type].name}) can't shoot.`, true);
+            this.hint(`Unit ${unit.id} (${UnitTypes[unit.type].name}) can't attack.`, true);
             return;
           }
           break;
@@ -262,8 +263,13 @@ export class DebugUI {
     this.render();
   }
 
-  canShoot(unit) {
-    return !!unit && UnitTypes[unit.type].orders.includes('shoot');
+  /** For a unit that can attack: a function (x, y) -> attack order toward that cell. */
+  attackOrder(unit) {
+    if (!unit) return null;
+    const def = UnitTypes[unit.type];
+    if (def.orders.includes('shoot')) return (x, y) => shoot(directionToward(unit, x, y));
+    if (def.orders.includes('thrust')) return (x, y) => thrust(direction8Toward(unit, x, y));
+    return null;
   }
 
   tick() {
@@ -434,7 +440,7 @@ function teamClass(u) {
 
 function fmtOrder(o) {
   if (o.type === 'move') return `move(${o.x}, ${o.y})`;
-  if (o.type === 'shoot') return `shoot(${o.dir})`;
+  if (o.type === 'shoot' || o.type === 'thrust') return `${o.type}(${o.dir})`;
   return o.type;
 }
 
@@ -446,6 +452,15 @@ function directionToward(u, x, y) {
   return dy > 0 ? 'down' : 'up';
 }
 
+/** Nearest of the 8 directions from a unit toward a cell. */
+function direction8Toward(u, x, y) {
+  const dx = x - u.x;
+  const dy = y - u.y;
+  // Snap the angle to 45° sectors. Screen y grows downward.
+  const sector = Math.round(Math.atan2(dy, dx) / (Math.PI / 4));
+  return ['left', 'up-left', 'up', 'up-right', 'right', 'down-right', 'down', 'down-left', 'left'][sector + 4];
+}
+
 function fmtEvent(e) {
   switch (e.type) {
     case 'moved': return `<div class="moved">#${e.unitId} ${e.path.map((p) => p.join(',')).join(' → ')}</div>`;
@@ -455,7 +470,11 @@ function fmtEvent(e) {
     case 'shot': return `<div class="shot">#${e.unitId} fired projectile ${e.projectileId} ${e.dir} from ${e.from}</div>`;
     case 'projectileMoved': return `<div class="shot">projectile ${e.projectileId} ${e.path.map((p) => p.join(',')).join(' → ')}</div>`;
     case 'projectileExpired': return `<div class="meta">projectile ${e.projectileId} left the grid @t=${e.time}</div>`;
-    case 'killed': return `<div class="killed">${e.team === Teams.CPU ? 'CPU' : 'Your'} #${e.unitId} KILLED at ${e.at} by projectile ${e.by.join(', ')} (#${e.shooterId}) @t=${e.time}</div>`;
+    case 'thrust': return `<div class="shot">#${e.unitId} thrust ${e.dir} at ${e.cells.map((c) => c.join(',')).join(' and ') || '(off the board)'}</div>`;
+    case 'killed': {
+      const how = e.hits.map((h) => (h.cause === 'thrust' ? `pike of #${h.attackerId}` : `projectile ${h.sourceId} (#${h.attackerId})`)).join(' + ');
+      return `<div class="killed">${e.team === Teams.CPU ? 'CPU' : 'Your'} #${e.unitId} KILLED at ${e.at} by ${how} @t=${e.time}</div>`;
+    }
     default: return `<div class="meta">${e.type} ${JSON.stringify(e)}</div>`;
   }
 }

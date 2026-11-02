@@ -5,12 +5,13 @@ import { Game, move, shoot } from '../src/engine/index.js';
 const G = 'gunslinger';
 const kills = (events) => events.filter((e) => e.type === 'killed').map((e) => [e.unitId, e.time]);
 
-test('unit types: gunslinger moves 1/tick; basic units cannot shoot', () => {
+test('unit types: gunslinger moves 1/tick; pikemen are the default and cannot shoot', () => {
   const g = new Game({ width: 5, height: 5, units: [{ x: 0, y: 0, type: G }, { x: 4, y: 4 }] });
   assert.equal(g.getUnit(1).speed, 1);
-  assert.equal(g.getUnit(2).type, 'basic');
+  assert.equal(g.getUnit(2).type, 'pikeman');
   assert.throws(() => g.queueOrder(2, shoot('up')), /cannot shoot/);
   assert.throws(() => g.queueOrder(1, shoot('north')), /direction/);
+  assert.throws(() => g.queueOrder(1, shoot('up-left')), /direction/); // gunslingers: 4 directions
   assert.throws(() => g.addUnit(2, 2, undefined, { type: 'wizard' }), /Unknown unit type/);
 });
 

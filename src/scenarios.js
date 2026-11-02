@@ -2,7 +2,7 @@
 // the rest are rule demos where every unit is on the player's team and
 // orders are pre-queued so pressing End turn shows a specific rule.
 
-import { Game, move, shoot } from './engine/index.js';
+import { Game, move, shoot, thrust } from './engine/index.js';
 
 const SIZE = 8;
 
@@ -132,6 +132,17 @@ export const scenarios = {
     // there, and takes the bullet. Unit 1's shot passed (3,2) at t=3/4 and
     // goes on to kill unit 2. Unit 1 survives.
     g.queueOrder(3, move(3, 2));
+    return g;
+  },
+
+  'Pikeman: thrust': () => {
+    // Unit 1 strikes the two cells to its right at the end of the tick.
+    // Unit 2 steps out of reach in time; unit 3 walks in and is hit
+    // (all three are on the same team: friendly fire).
+    const g = new Game({ width: SIZE, height: SIZE, units: [{ x: 2, y: 3 }, { x: 3, y: 3 }, { x: 4, y: 2 }] });
+    g.queueOrder(1, thrust('right'));
+    g.queueOrder(2, move(3, 4));
+    g.queueOrder(3, move(4, 3));
     return g;
   },
 

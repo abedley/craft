@@ -10,15 +10,20 @@
 //   1. Dodge: if a projectile (anyone's: friendly fire is on) will reach this
 //      unit within the next two ticks with nothing in between, and there's
 //      still time to step out of its line, step sideways into a free cell.
-//   2. Shoot: a shooter fires if the first unit along some direction is an
-//      enemy (it never fires when a teammate is first in line). The nearest
-//      such enemy is chosen.
+//   2. Attack:
+//      - Shooters fire if the first unit along some direction is an enemy
+//        (never when a teammate is first in line); nearest enemy first.
+//      - Thrusters (pikemen) strike in the direction that catches the most
+//        enemies in their reach, as the board stands now, and never when a
+//        teammate would be in the strike: either standing there or, for a
+//        teammate already planned this turn, stepping in.
 //   3. Move: shooters walk toward the nearest free cell that has a clear
 //      straight shot at some enemy (same row or column, nothing in between);
 //      other units, or shooters with no such cell, walk toward the nearest
 //      enemy.
 
-import { move, shoot, Directions, OrderType } from '../engine/orders.js';
+import { move, shoot, thrust, Directions, OrderType, ALL_DIRECTIONS } from '../engine/orders.js';
+import { nextStep, strikeCells } from '../engine/game.js';
 import { getUnitType } from '../engine/unitTypes.js';
 
 const DIR_ORDER = ['up', 'right', 'down', 'left']; // fixed tie-break order
@@ -35,13 +40,31 @@ export function planTurn(game, team) {
   const enemies = game.units.filter((u) => u.team !== team);
   if (enemies.length === 0) return plan;
 
+  // Cells this team's units will step into this turn (planned so far).
+  const teamCells = new Set(mine.map((m) => `${m.x},${m.y}`));
+  const planMove = (u, order) => {
+    const next = nextStep({ ...u, order });
+    teamCells.add(`${next.x},${next.y}`);
+  };
+
   for (const u of mine) {
-    const canShoot = getUnitType(u.type).orders.includes(OrderType.SHOOT);
+    const def = getUnitType(u.type);
+    const canShoot = def.orders.includes(OrderType.SHOOT);
+    const canThrust = def.orders.includes(OrderType.THRUST);
 
     const dodge = dodgeCell(game, u);
     if (dodge) {
       plan.push([u.id, move(dodge[0], dodge[1])]);
+      planMove(u, move(dodge[0], dodge[1]));
       continue;
+    }
+
+    if (canThrust) {
+      const dir = bestThrust(game, u, def.melee, teamCells);
+      if (dir) {
+        plan.push([u.id, thrust(dir)]);
+        continue;
+      }
     }
 
     if (canShoot) {
@@ -54,7 +77,10 @@ export function planTurn(game, team) {
 
     const target = nearest(u, enemies);
     const dest = (canShoot && firingPosition(game, u, enemies)) || [target.x, target.y];
-    if (dest[0] !== u.x || dest[1] !== u.y) plan.push([u.id, move(dest[0], dest[1])]);
+    if (dest[0] !== u.x || dest[1] !== u.y) {
+      plan.push([u.id, move(dest[0], dest[1])]);
+      planMove(u, move(dest[0], dest[1]));
+    }
   }
   return plan;
 }
@@ -75,6 +101,20 @@ function bestShot(game, u) {
     const hit = firstInLine(game, u.x, u.y, dir);
     if (!hit || hit.unit.team === u.team) continue;
     if (!best || hit.dist < best.dist) best = { dir, dist: hit.dist };
+  }
+  return best?.dir ?? null;
+}
+
+function bestThrust(game, u, melee, teamCells) {
+  let best = null;
+  for (const dir of ALL_DIRECTIONS.filter((d) => melee.directions.includes(d))) {
+    const cells = strikeCells(u, dir, melee.reach);
+    if (cells.some(([x, y]) => teamCells.has(`${x},${y}`))) continue;
+    const enemies = cells.filter(([x, y]) => {
+      const occ = game.unitAt(x, y);
+      return occ && occ.team !== u.team;
+    }).length;
+    if (enemies > 0 && (!best || enemies > best.enemies)) best = { dir, enemies };
   }
   return best?.dir ?? null;
 }
