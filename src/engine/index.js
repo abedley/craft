@@ -4,7 +4,7 @@ export {
 export {
   TerrainTypes, DEFAULT_TERRAIN, getTerrainType, terrainForChar, defineTerrainType, registerTerrainTypes,
 } from './terrain.js';
-export { move, quickMove, charge, goesToFront, attack, validateOrder, OrderType } from './orders.js';
+export { move, quickMove, charge, teleport, goesToFront, attack, validateOrder, OrderType } from './orders.js';
 export {
   Directions, ALL_DIRECTIONS, OPPOSITE, DIRECTION_ANGLES,
   step, distance, neighbors, hexLineStep, toAxial, fromAxial, axialRound,

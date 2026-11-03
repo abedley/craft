@@ -117,6 +117,12 @@ export class Renderer {
       }
     }
 
+    // Mines (visible to both sides), in the colour of the team that laid them.
+    for (const m of game.mines ?? []) {
+      const [cx, cy] = this.center(m.x, m.y);
+      this.drawMine(cx, cy, TEAM_COLORS[m.team] ?? '#ffffff', 1);
+    }
+
     // Hexes the selected unit can move to this turn.
     if (reach) {
       ctx.save();
@@ -145,6 +151,8 @@ export class Renderer {
         this.drawOrderLine(u, order, color, true);
       } else if (order.type === 'charge') {
         this.drawCharge(game, u, order.dir);
+      } else if (order.type === 'teleport') {
+        this.drawTeleport(u, order);
       } else if (order.type === 'attack') {
         const atk = UnitTypes[u.type].attack;
         if (atk.kind === AttackKind.PROJECTILE) this.drawShotLine(game, u, order.dir, atk.range);
@@ -337,6 +345,60 @@ export class Renderer {
       ctx.stroke();
     }
     ctx.restore();
+  }
+
+  /** A mine: a dark disc with spikes and a ring in the layer's team colour. */
+  drawMine(cx, cy, color, alpha) {
+    const { ctx, cell } = this;
+    const r = cell * 0.17;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let k = 0; k < 8; k++) {
+      const a = (Math.PI / 4) * k;
+      ctx.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+      ctx.lineTo(cx + Math.cos(a) * r * 1.6, cy + Math.sin(a) * r * 1.6);
+    }
+    ctx.stroke();
+    ctx.fillStyle = COLORS.label;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** A queued teleport: a dotted arc to the landing hex, and the mine it will leave. */
+  drawTeleport(u, order) {
+    const { ctx, cell } = this;
+    const [ax, ay] = this.center(u.x, u.y);
+    const [bx, by] = this.center(order.x, order.y);
+    const color = u.team === 'cpu' ? TEAM_COLORS.cpu : COLORS.charge;
+    // Arc bowed to one side, so it reads as a jump rather than a walk.
+    const mx = (ax + bx) / 2 - (by - ay) * 0.3;
+    const my = (ay + by) / 2 + (bx - ax) * 0.3;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([2, 6]);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.quadraticCurveTo(mx, my, bx, by);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath();
+    ctx.arc(bx, by, cell * 0.3, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+    if (UnitTypes[u.type].teleport?.leavesMine) this.drawMine(ax + cell * 0.32, ay + cell * 0.32, TEAM_COLORS[u.team] ?? '#fff', 0.6);
   }
 
   /** A queued charge: its straight path, then the strike it ends with. */

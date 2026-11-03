@@ -91,6 +91,24 @@ to the **front of the queue**. Each pikeman can charge **once per match**.
 - **CPU:** CPU pikemen charge too, when no normal strike reaches but a charge's closing strike would
   hit an enemy (never a teammate), in the direction that hits the most.
 
+### Stalker (teleport and mines)
+
+The **stalker** has **no attack**. Instead it can **teleport** (`teleport(x, y)`) to any free,
+walkable hex **up to 3 hexes away**. It jumps straight there, so water and units in between don't
+matter. It **leaves a mine** on the hex it left. A teleport is a normal order (it joins the end of
+the queue) and can be used every turn. If another unit has taken the landing hex earlier in the
+queue, nothing happens and no mine is laid.
+
+**Mines:** any unit that moves onto a mined hex, whether walking onto it, walking or charging
+*through* it, or teleporting onto it, sets it off and is **killed**; the mine is used up. That
+includes either team and the stalker itself. A charging pikeman killed by a mine never strikes.
+Shots fly over mines. Mines are visible to both sides (drawn in the colour of the team that laid
+them), and `game.mines` lists them.
+
+It's all unit JSON: `"teleport": { "distance": 3, "leavesMine": true }` (add `"uses": n` to limit
+it). The CPU stalker closes in to about 3 hexes from your units and teleports away, leaving a mine
+in their path, when one gets within 2. CPU units never walk, charge or dodge onto a mine.
+
 ### CPU (`src/ai/cpu.js`)
 
 Deterministic: same board, same plan. For each CPU unit in id order:
@@ -237,6 +255,7 @@ error messages that name the unit and field.
 | `attack.reach` | melee: how many hexes in a row it strikes |
 | `attack.speed` | projectile: hexes flown per queue entry, 1–6 |
 | `attack.range` | projectile: max cells travelled; leave it out for unlimited |
+| `teleport` | optional `{ "distance": 3, "leavesMine": true, "uses": n }`: jump to any free walkable hex up to `distance` away; optionally leave a mine behind; `uses` per match (omit for unlimited) |
 | `charge` | optional `{ "distance": 3, "uses": 1 }`: a straight-line rush of up to `distance` hexes, ending with the unit's attack in that direction; goes to the front of the queue; `uses` times per unit per match |
 | `attack.blockedByAdjacentEnemy` | optional, `true`: the attack fails if an enemy is next to the unit when its queue entry runs |
 | `default` | type used when a unit doesn't name one |
@@ -301,9 +320,11 @@ UI header, so two runs with the same orders can be compared at a glance.
   then tap one of them to queue `move(x, y)`.
 - **Paint** mode: pick a terrain type and tap or drag across hexes to paint it. The CPU re-plans
   afterwards.
-- **Charge** mode: tap one of your pikemen, then tap toward where it should charge (any hex or unit;
-  snapped to the nearest hex direction). The board shows the straight path in purple and the hexes
-  its closing strike will hit. Pikemen that still have a charge show a purple chevron pip.
+- **Ability** mode: select one of your units with an ability. A **pikeman** charges: tap toward where
+  it should charge (any hex or unit; snapped to the nearest hex direction). A **stalker** teleports:
+  tap one of the highlighted hexes (its teleport is drawn as a dotted arc, with a faint preview of the
+  mine it will leave). For a charge, the board shows the straight path in purple and the hexes its
+  closing strike will hit. Pikemen that still have a charge show a purple chevron pip.
 - **Quick** mode: the same, but queues that unit's one-time quick move (drawn in cyan, listed first in
   the queue). Units that still have their quick move show a small lightning pip.
 - **Attack** mode: tap one of your units, then tap any cell or unit to attack toward it, snapped to the

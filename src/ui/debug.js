@@ -20,7 +20,7 @@
 // makes the CPU re-plan. "Back" restores the snapshot taken just before the
 // last "End turn", including both sides' staged orders (an exact undo).
 
-import { Game, Teams, MAX_SPEED, move, quickMove, charge, chargePlan, distancesTo, ALL_DIRECTIONS, attack, TerrainTypes, DEFAULT_TERRAIN, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
+import { Game, Teams, MAX_SPEED, move, quickMove, charge, teleport, chargePlan, distancesTo, distance, ALL_DIRECTIONS, attack, TerrainTypes, DEFAULT_TERRAIN, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
 import { Match, MatchStatus } from '../match.js';
 import { Renderer } from './renderer.js';
 import { scenarios } from '../scenarios.js';
@@ -243,13 +243,13 @@ export class DebugUI {
     if (mode === 'quick' && this.selectedId !== null && !(this.game.getUnit(this.selectedId)?.quickMoves > 0)) {
       this.selectedId = null;
     }
-    if (mode === 'charge' && this.selectedId !== null && !(this.game.getUnit(this.selectedId)?.charges > 0)) {
+    if (mode === 'ability' && this.selectedId !== null && !hasAbility(this.game.getUnit(this.selectedId))) {
       this.selectedId = null;
     }
     this.hint({
       move: 'Tap a unit to select it, then tap a cell to queue a move.',
       quick: 'Quick move (once per unit): steps first, before shots fly, and wins ties. Tap a unit, then a hex.',
-      charge: 'Charge (pikemen, once each): rush up to 3 hexes in a straight line, then strike. Goes first. Tap a pikeman, then a direction.',
+      ability: 'Abilities: a pikeman CHARGES (tap a direction; once, goes first); a stalker TELEPORTS up to 3 hexes, leaving a mine (tap a hex).',
       attack: 'Tap one of your units, then tap a cell or unit to attack toward it.',
       add: 'Tap an empty cell to add a unit.',
       remove: 'Tap a unit to remove it.',
@@ -310,15 +310,23 @@ export class DebugUI {
           }
           break;
         }
-        case 'charge': {
-          // Like Attack mode: select a pikeman, then tap any hex or unit to
-          // charge in that direction.
+        case 'ability': {
+          // Select one of your units with an ability, then tap: pikemen charge
+          // toward the tap (direction), stalkers teleport to the tapped hex.
           const sel = this.selectedId !== null ? this.game.getUnit(this.selectedId) : null;
+          const def = sel && UnitTypes[sel.type];
           if (unit && unit.id === this.selectedId) {
             this.selectedId = null;
             this.hint('Deselected.');
-          } else if (sel && sel.charges > 0) {
-            const def = UnitTypes[sel.type];
+          } else if (sel && unit && unit.team === sel.team && hasAbility(unit)) {
+            // Tapping another of your units with an ability switches to it.
+            this.selectedId = null;
+            this.onCellTap(x, y);
+            return;
+          } else if (sel && def.teleport && sel.teleports !== 0) {
+            this.match.playerOrder(sel.id, teleport(x, y));
+            this.hint(`Queued: unit ${sel.id} TELEPORT to ${x},${y}${def.teleport.leavesMine ? ', leaving a mine' : ''}.`);
+          } else if (sel && def.charge && sel.charges > 0) {
             const dir = nearestDirection(this.renderer, sel, x, y, def.attack?.directions ?? ALL_DIRECTIONS);
             this.match.playerOrder(sel.id, charge(dir));
             const plan = chargePlan(this.game, sel, dir);
@@ -327,15 +335,16 @@ export class DebugUI {
           } else if (unit && unit.team === Teams.CPU) {
             this.hint(`Unit ${unit.id} is a CPU unit.`, true);
             return;
-          } else if (unit && !UnitTypes[unit.type].charge) {
-            this.hint(`${UnitTypes[unit.type].name} units can't charge.`, true);
-            return;
-          } else if (unit && !(unit.charges > 0)) {
-            this.hint(`Unit ${unit.id} has already used its charge.`, true);
+          } else if (unit && !hasAbility(unit)) {
+            const d = UnitTypes[unit.type];
+            this.hint(d.charge || d.teleport ? `Unit ${unit.id} has used up its ability.` : `${d.name} units have no ability.`, true);
             return;
           } else if (unit) {
             this.selectedId = unit.id;
-            this.hint(`Unit ${unit.id} selected. Tap toward where it should charge (straight line, up to ${UnitTypes[unit.type].charge.distance} hexes, then it strikes).`);
+            const d = UnitTypes[unit.type];
+            this.hint(d.teleport
+              ? `Unit ${unit.id} selected. Tap a highlighted hex to teleport there (up to ${d.teleport.distance} away).`
+              : `Unit ${unit.id} selected. Tap toward where it should charge (straight line, up to ${d.charge.distance} hexes, then it strikes).`);
           }
           break;
         }
@@ -459,11 +468,22 @@ export class DebugUI {
 
   // ---- rendering ---------------------------------------------------------
 
-  /** Hexes the selected unit can move to this turn (Move / Quick modes), or null. */
+  /** Hexes the selected unit can move (Move / Quick) or teleport (Ability) to this turn, or null. */
   reachable() {
-    if (this.mode !== 'move' && this.mode !== 'quick') return null;
     const u = this.selectedId !== null ? this.game.getUnit(this.selectedId) : null;
     if (!u) return null;
+    const tp = UnitTypes[u.type].teleport;
+    if (this.mode === 'ability' && tp) {
+      const cells = [];
+      for (let x = 0; x < this.game.width; x++) {
+        for (let y = 0; y < this.game.height; y++) {
+          const d = distance(u.x, u.y, x, y);
+          if (d > 0 && d <= tp.distance && this.game.isWalkable(x, y) && !this.game.unitAt(x, y)) cells.push([x, y]);
+        }
+      }
+      return cells;
+    }
+    if (this.mode !== 'move' && this.mode !== 'quick') return null;
     const cells = [];
     for (const [k, d] of distancesTo(this.game, u.x, u.y)) {
       if (d > 0 && d <= u.speed) cells.push(k.split(',').map(Number));
@@ -535,7 +555,7 @@ export class DebugUI {
         const el = $('#tab-units');
         const projLines = g.projectiles.map((p) => `<div class="shot">projectile ${p.id} @ ${p.x},${p.y} → ${p.dir} (from #${p.ownerId})</div>`).join('');
         el.innerHTML = projLines + (g.units.length
-          ? g.units.map((u) => `<div class="${teamClass(u)}">${teamLabel(u)} #${u.id} ${UnitTypes[u.type].name} @ ${u.x},${u.y} spd ${u.speed}${u.quickMoves > 0 ? ' ⚡' : ''}${u.charges > 0 ? ' »' : ''} ${g.orderFor(u.id) ? fmtOrder(g.orderFor(u.id)) : '<span class="meta">idle</span>'}</div>`).join('')
+          ? g.units.map((u) => `<div class="${teamClass(u)}">${teamLabel(u)} #${u.id} ${UnitTypes[u.type].name} @ ${u.x},${u.y} spd ${u.speed}${u.quickMoves > 0 ? ' ⚡' : ''}${u.charges > 0 ? ' »' : ''}${u.teleports !== 0 && UnitTypes[u.type].teleport ? ' ⇢' : ''} ${g.orderFor(u.id) ? fmtOrder(g.orderFor(u.id)) : '<span class="meta">idle</span>'}</div>`).join('')
           : '<div class="empty">No units.</div>');
         break;
       }
@@ -567,9 +587,17 @@ function teamClass(u) {
   return u?.team === Teams.CPU ? 'team-cpu' : 'team-player';
 }
 
+/** Does this unit have an ability it can still use (charge or teleport)? */
+function hasAbility(u) {
+  if (!u) return false;
+  const d = UnitTypes[u.type];
+  return !!((d.charge && u.charges > 0) || (d.teleport && u.teleports !== 0));
+}
+
 function fmtOrder(o) {
   if (o.type === 'move') return `${o.quick ? 'QUICK ' : ''}move(${o.x}, ${o.y})`;
   if (o.type === 'charge') return `CHARGE ${o.dir}`;
+  if (o.type === 'teleport') return `TELEPORT to ${o.x},${o.y}`;
   if (o.type === 'attack') return `attack(${o.dir})`;
   return o.type;
 }
@@ -603,6 +631,9 @@ function fmtEvent(e) {
     case 'orderStarted': return `<div class="meta">${e.step}. #${e.unitId} ${fmtOrder(e.order)}${e.carried ? ' (continued)' : ''}</div>`;
     case 'quickMove': return `<div class="quick">#${e.unitId} used its quick move (${e.remaining} left)</div>`;
     case 'charge': return `<div class="charge">#${e.unitId} charges ${e.dir}! (${e.remaining} left)</div>`;
+    case 'teleported': return `<div class="charge">#${e.unitId} teleports ${e.from} → ${e.to}</div>`;
+    case 'minePlaced': return `<div class="meta">#${e.unitId} leaves mine ${e.mineId} at ${e.at}</div>`;
+    case 'mineExploded': return `<div class="killed">mine ${e.mineId} explodes under #${e.unitId} at ${e.at}</div>`;
     case 'chargeEnded': return `<div class="charge">#${e.unitId}'s charge ${e.reason === 'collided' ? `hit #${e.by}` : e.reason === 'terrain' ? 'was stopped by terrain / the edge' : 'went the full distance'}</div>`;
     case 'shot': return `<div class="shot">#${e.unitId} fired projectile ${e.projectileId} ${e.dir} from ${e.from}</div>`;
     case 'projectileMoved': return `<div class="shot">projectile ${e.projectileId} ${e.path.map((p) => p.join(',')).join(' → ')}</div>`;
@@ -610,7 +641,7 @@ function fmtEvent(e) {
     case 'attackBlocked': return `<div class="blocked">#${e.unitId} can't shoot: enemy #${e.by} is next to it</div>`;
     case 'strike': return `<div class="shot">#${e.unitId} struck ${e.dir} at ${e.cells.map((c) => c.join(',')).join(' and ') || '(off the board)'}</div>`;
     case 'killed': {
-      const how = e.hits.map((h) => (h.cause === 'melee' ? `strike of #${h.attackerId}` : `projectile ${h.sourceId} (#${h.attackerId})`)).join(' + ');
+      const how = e.hits.map((h) => (h.cause === 'mine' ? `mine ${h.sourceId} (#${h.attackerId})` : h.cause === 'melee' ? `strike of #${h.attackerId}` : `projectile ${h.sourceId} (#${h.attackerId})`)).join(' + ');
       return `<div class="killed">${e.team === Teams.CPU ? 'CPU' : 'Your'} #${e.unitId} KILLED at ${e.at} by ${how}</div>`;
     }
     default: return `<div class="meta">${e.type} ${JSON.stringify(e)}</div>`;

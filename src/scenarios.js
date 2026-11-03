@@ -5,7 +5,7 @@
 // The board is flat-topped hexes (see engine/hex.js). Columns are straight
 // up/down lines, so most demos run down column 3.
 
-import { Game, move, attack, charge } from './engine/index.js';
+import { Game, move, attack, charge, teleport } from './engine/index.js';
 
 const W = 8;
 const H = 8;
@@ -49,6 +49,11 @@ export const scenarios = {
   'Open field vs CPU': () => board([
     { x: 1, y: 7, type: GS, team: P }, { x: 3, y: 6, team: P }, { x: 4, y: 7, team: P }, { x: 6, y: 7, type: GS, team: P },
     { x: 1, y: 0, type: GS, team: C }, { x: 3, y: 0, team: C }, { x: 4, y: 0, team: C }, { x: 6, y: 0, type: GS, team: C },
+  ]),
+
+  'Stalkers vs CPU': () => board([
+    { x: 1, y: 7, type: GS, team: P }, { x: 3, y: 6, type: 'stalker', team: P }, { x: 4, y: 7, team: P }, { x: 6, y: 7, type: GS, team: P },
+    { x: 1, y: 0, type: GS, team: C }, { x: 3, y: 0, type: 'stalker', team: C }, { x: 4, y: 0, team: C }, { x: 6, y: 0, type: GS, team: C },
   ]),
 
   'Duel vs CPU': () => board([{ x: 0, y: 7, type: GS, team: P }, { x: 7, y: 0, type: GS, team: C }]),
@@ -174,6 +179,17 @@ export const scenarios = {
     g.queueOrder(3, attack('down'));
     g.queueOrder(2, charge('up'));
     g.queueOrder(4, charge('down-right'));
+    return g;
+  },
+
+  'Stalker: mine': () => {
+    // Stalker 1 teleports 3 hexes up, leaving a mine where it stood. The CPU
+    // pikeman 2 is walking down the column toward it: next turn's step (or
+    // any later one) onto (3,4) sets the mine off.
+    const g = board([{ x: 3, y: 4, type: 'stalker' }, { x: 3, y: 2, team: C }]);
+    g.getUnit(2).charges = 0;
+    g.queueOrder(1, teleport(5, 3));
+    g.queueOrder(2, move(3, 3));
     return g;
   },
 

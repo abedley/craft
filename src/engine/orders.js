@@ -7,6 +7,7 @@ export const OrderType = Object.freeze({
   MOVE: 'move',
   ATTACK: 'attack',
   CHARGE: 'charge',
+  TELEPORT: 'teleport',
 });
 
 import { ALL_DIRECTIONS } from './hex.js';
@@ -39,6 +40,15 @@ export function charge(dir) {
   return { type: OrderType.CHARGE, dir };
 }
 
+/**
+ * Create a teleport: the unit jumps straight to (x, y), up to its type's
+ * teleport distance away, ignoring anything in between. It joins the END of
+ * the queue like a normal order. A stalker leaves a mine on the hex it left.
+ */
+export function teleport(x, y) {
+  return { type: OrderType.TELEPORT, x, y };
+}
+
 /** Quick moves and charges go to the front of the queue. */
 export const goesToFront = (order) => !!(order?.quick || order?.type === OrderType.CHARGE);
 
@@ -64,6 +74,12 @@ export function validateOrder(order, grid, unitType = null) {
     case OrderType.MOVE: {
       const { x, y } = order;
       if (order.quick !== undefined && order.quick !== true) return '"quick" must be true when present';
+      if (!Number.isInteger(x) || !Number.isInteger(y)) return 'coordinates must be integers';
+      if (x < 0 || y < 0 || x >= grid.width || y >= grid.height) return 'target out of bounds';
+      return null;
+    }
+    case OrderType.TELEPORT: {
+      const { x, y } = order;
       if (!Number.isInteger(x) || !Number.isInteger(y)) return 'coordinates must be integers';
       if (x < 0 || y < 0 || x >= grid.width || y >= grid.height) return 'target out of bounds';
       return null;

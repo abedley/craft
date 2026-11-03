@@ -25,6 +25,9 @@
 //   3. Charge (melee units with charges left): if a straight-line charge in
 //      some direction would end with a strike on enemies (and no teammates),
 //      charge in the direction that hits the most.
+//   Stalkers (units with a teleport): if an enemy is within 2, teleport to
+//      the free hex in range furthest from the enemy (leaving a mine where it
+//      stood); otherwise close in until about the teleport distance away.
 //   4. Move: projectile units head for the nearest free cell with a clear
 //      shot (allowed direction, in range, nothing in between, and not next to
 //      an enemy if that would block the shot) at some enemy; everyone else
@@ -32,11 +35,12 @@
 //      terrain units can't cross (e.g. water); firing cells must be walkable
 //      and reachable, but shots fly over any terrain. A move is one turn's
 //      walk, so the order is for the furthest hex toward that destination the
-//      unit can reach this turn (it re-plans next turn).
+//      unit can reach this turn (it re-plans next turn). The CPU never walks,
+//      charges or dodges onto a mine.
 //
 // Distances are hex steps; lines are straight hex lines (see engine/hex.js).
 
-import { move, attack, charge } from '../engine/orders.js';
+import { move, attack, charge, teleport } from '../engine/orders.js';
 import { nextStep, strikeCells, distancesTo, chargePlan, walkToward } from '../engine/game.js';
 import { getUnitType, AttackKind } from '../engine/unitTypes.js';
 import { step, distance, OPPOSITE, neighbors } from '../engine/hex.js';
@@ -87,6 +91,21 @@ export function planTurn(game, team) {
     const walk = distancesTo(game, u.x, u.y);
     const target = nearest(u, enemies, walk);
 
+    // Stalker-style units: teleport away when an enemy gets close (leaving
+    // a mine in its path), otherwise hover about the teleport distance away.
+    if (def.teleport && u.teleports !== 0) {
+      const d = target ? walk.get(`${target.x},${target.y}`) : Infinity;
+      if (d <= 2) {
+        const spot = escapeHex(game, u, def.teleport.distance, enemies);
+        if (spot) {
+          plan.push([u.id, teleport(spot[0], spot[1])]);
+          teamCells.add(`${spot[0]},${spot[1]}`);
+          continue;
+        }
+      }
+      if (d <= def.teleport.distance) continue; // close enough: wait for them
+    }
+
     // Charge: no attack from here, but a straight-line charge would end in a
     // strike on enemies (and none of our own): charge in the best direction.
     if (def.charge && u.charges > 0 && atk?.kind === AttackKind.MELEE) {
@@ -102,8 +121,9 @@ export function planTurn(game, team) {
     const dest = (atk?.kind === AttackKind.PROJECTILE && firingPosition(game, u, atk, enemies, walk))
       || (target && [target.x, target.y]);
     if (dest) {
-      // Moves are one turn's walk: head as far toward dest as speed allows.
-      const [x, y] = walkToward(game, u, dest[0], dest[1]);
+      // Moves are one turn's walk: head as far toward dest as speed allows,
+      // without walking onto a mine.
+      const [x, y] = safeStep(game, u, dest[0], dest[1]);
       if (x !== u.x || y !== u.y) {
         plan.push([u.id, move(x, y)]);
         planMove(u, move(x, y));
@@ -150,12 +170,68 @@ function bestStrike(game, u, atk, teamCells) {
 }
 
 /** Nearest enemy by walking distance; null if none can be reached. */
+/** The hexes a move to (x, y) would pass through (engine route, units ignored). */
+function routeTo(game, u, x, y) {
+  const cells = [];
+  let cur = { x: u.x, y: u.y, order: move(x, y) };
+  for (let k = 0; k < u.speed; k++) {
+    const next = nextStep(cur, game);
+    if (next.x === cur.x && next.y === cur.y) break;
+    cells.push([next.x, next.y]);
+    cur = { ...cur, x: next.x, y: next.y };
+  }
+  return cells;
+}
+
+/**
+ * One turn's move toward (tx, ty) that doesn't walk onto or through a mine:
+ * the plain walkToward hex if its route is clear, otherwise the reachable
+ * hex with a mine-free route that's closest (walking) to the target, if it
+ * gets any closer than staying put.
+ */
+function safeStep(game, u, tx, ty) {
+  const [x, y] = walkToward(game, u, tx, ty);
+  const mined = (cells) => cells.some(([cx, cy]) => game.mineAt(cx, cy));
+  if (!mined(routeTo(game, u, x, y))) return [x, y];
+  const toTarget = distancesTo(game, tx, ty);
+  let best = null;
+  for (const [k, d] of distancesTo(game, u.x, u.y)) {
+    if (d === 0 || d > u.speed) continue;
+    const [cx, cy] = k.split(',').map(Number);
+    if (game.unitAt(cx, cy) || mined(routeTo(game, u, cx, cy))) continue;
+    const dt = toTarget.get(k) ?? Infinity;
+    if (!best || dt < best.d || (dt === best.d && (cy < best.y || (cy === best.y && cx < best.x)))) best = { x: cx, y: cy, d: dt };
+  }
+  const stay = toTarget.get(`${u.x},${u.y}`) ?? Infinity;
+  return best && best.d < stay ? [best.x, best.y] : [u.x, u.y];
+}
+
+/**
+ * Where to teleport to get away from enemies: the free, walkable hex within
+ * `range` (no mine or projectile on it) that is furthest from the nearest
+ * enemy. Ties: lower y, then lower x. Null if nowhere is further than here.
+ */
+function escapeHex(game, u, range, enemies) {
+  const nearestEnemy = (x, y) => Math.min(...enemies.map((e) => distance(x, y, e.x, e.y)));
+  let best = null;
+  for (let x = 0; x < game.width; x++) {
+    for (let y = 0; y < game.height; y++) {
+      const d = distance(u.x, u.y, x, y);
+      if (d === 0 || d > range) continue;
+      if (!game.isWalkable(x, y) || game.unitAt(x, y) || game.mineAt(x, y) || game.projectileAt(x, y)) continue;
+      const away = nearestEnemy(x, y);
+      if (!best || away > best.away) best = { x, y, away };
+    }
+  }
+  return best && best.away > nearestEnemy(u.x, u.y) ? [best.x, best.y] : null;
+}
+
 /** Direction whose charge-then-strike hits the most enemies and no teammates. */
 function bestCharge(game, u, atk, teamCells) {
   let best = null;
   for (const dir of inPriorityOrder(atk.directions)) {
     const plan = chargePlan(game, u, dir);
-    if (plan.path.some(([x, y], i) => i > 0 && teamCells.has(`${x},${y}`))) continue;
+    if (plan.path.some(([x, y], i) => i > 0 && (teamCells.has(`${x},${y}`) || game.mineAt(x, y)))) continue;
     if (plan.strike.some(([x, y]) => teamCells.has(`${x},${y}`))) continue;
     const enemies = plan.strike.filter(([x, y]) => {
       const occ = game.unitAt(x, y);
@@ -240,7 +316,7 @@ function dodgeCell(game, u) {
     for (const side of DIR_PRIORITY) {
       if (side === p.dir || side === OPPOSITE[p.dir]) continue;
       const [nx, ny] = step(u.x, u.y, side);
-      if (game.isWalkable(nx, ny) && !game.unitAt(nx, ny)) return [nx, ny];
+      if (game.isWalkable(nx, ny) && !game.unitAt(nx, ny) && !game.mineAt(nx, ny)) return [nx, ny];
     }
   }
   return null;

@@ -16,6 +16,13 @@
 //         "shape":  "circle",           circle | diamond | square | triangle
 //                                       (default circle)
 //         "attack": { ... }             omit for a unit that can't attack
+//         "teleport": { "distance": 3, "leavesMine": true, "uses": 2 }
+//                                       optional: jump to any free walkable hex
+//                                       up to `distance` away (ignores what's in
+//                                       between); `leavesMine` drops a mine on
+//                                       the hex it left; `uses` per match (leave
+//                                       it out for unlimited). A normal-speed
+//                                       order: it joins the end of the queue.
 //         "charge": { "distance": 3, "uses": 1 }
 //                                       optional: a move of up to `distance`
 //                                       hexes that goes to the FRONT of the
@@ -74,7 +81,7 @@ export function getUnitType(type) {
 export function defineUnitType(key, raw) {
   const fail = (msg) => { throw new Error(`Unit type "${key}": ${msg}`); };
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) fail('must be an object');
-  checkKeys(raw, ['name', 'speed', 'shape', 'attack', 'charge'], fail);
+  checkKeys(raw, ['name', 'speed', 'shape', 'attack', 'charge', 'teleport'], fail);
 
   if (typeof raw.name !== 'string' || !raw.name) fail('"name" must be a non-empty string');
   checkSpeed(raw.speed, '"speed"', fail);
@@ -120,6 +127,17 @@ export function defineUnitType(key, raw) {
     charge = Object.freeze({ distance: c.distance, uses: c.uses });
   }
 
+  let teleport = null;
+  if (raw.teleport !== undefined) {
+    const t = raw.teleport;
+    if (!t || typeof t !== 'object' || Array.isArray(t)) fail('"teleport" must be an object');
+    checkKeys(t, ['distance', 'leavesMine', 'uses'], fail, 'teleport.');
+    checkSpeed(t.distance, '"teleport.distance"', fail);
+    if (t.leavesMine !== undefined && typeof t.leavesMine !== 'boolean') fail('"teleport.leavesMine" must be true or false');
+    if (t.uses !== undefined && (!Number.isInteger(t.uses) || t.uses < 1)) fail('"teleport.uses" must be a positive integer (or left out for unlimited)');
+    teleport = Object.freeze({ distance: t.distance, leavesMine: t.leavesMine ?? false, uses: t.uses ?? null });
+  }
+
   return Object.freeze({
     key,
     name: raw.name,
@@ -127,7 +145,12 @@ export function defineUnitType(key, raw) {
     shape,
     attack,
     charge,
-    orders: Object.freeze(attack ? [OrderType.MOVE, OrderType.ATTACK] : [OrderType.MOVE]),
+    teleport,
+    orders: Object.freeze([
+      OrderType.MOVE,
+      ...(attack ? [OrderType.ATTACK] : []),
+      ...(teleport ? [OrderType.TELEPORT] : []),
+    ]),
   });
 }
 

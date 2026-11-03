@@ -22,6 +22,12 @@
         "directions": "all",
         "blockedByAdjacentEnemy": true
       }
+    },
+    "stalker": {
+      "name": "Stalker",
+      "speed": 1,
+      "shape": "triangle",
+      "teleport": { "distance": 3, "leavesMine": true }
     }
   }
 }

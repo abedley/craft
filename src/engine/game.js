@@ -46,12 +46,20 @@
 //               its attack in the same direction, so a pikeman that collides
 //               strikes the unit it ran into (friendly fire included). Running
 //               into a projectile in flight is a hit. Nothing carries over.
+//   teleport    The unit jumps straight to its target hex (up to its type's
+//               teleport distance away; what's in between doesn't matter). If
+//               that hex has been taken earlier in the queue, nothing happens.
+//               A stalker leaves a MINE on the hex it left.
 //   projectile  (carried over) flies another `speed` hexes the same way.
+//
+// Mines: any unit (either team, the stalker too) that moves onto a mined hex
+// by walking, charging through or teleporting onto it, sets it off and is
+// killed; the mine is used up. Shots fly over mines.
 //
 // Determinism: no randomness, clock or DOM; state is plain JSON.
 
 import { validateOrder, OrderType, goesToFront } from './orders.js';
-import { step, hexLineStep, neighbors } from './hex.js';
+import { step, hexLineStep, neighbors, distance as hexDistance } from './hex.js';
 import * as Units from './unitTypes.js';
 import { getUnitType, AttackKind, MAX_SPEED } from './unitTypes.js';
 import * as Terrain from './terrain.js';
@@ -82,8 +90,10 @@ export class Game {
       tick: 0,
       nextUnitId: 1,
       nextProjectileId: 1,
+      nextMineId: 1,
       units: [], // kept sorted by id
       projectiles: [], // kept sorted by id
+      mines: [], // [{ id, x, y, ownerId, team }] (see teleport)
       queue: [], // see the top of this file
       // Terrain type key per hex, row-major: terrain[y * width + x].
       terrain: parseTerrain(terrain, width, height),
@@ -102,6 +112,9 @@ export class Game {
       throw new Error('This save is from an older version of the turn rules and can\'t be loaded');
     }
     game.state = structuredClone(snapshot);
+    game.state.mines ??= [];
+    game.state.nextMineId ??= 1;
+    for (const u of game.state.units) u.teleports ??= getUnitType(u.type).teleport ? (getUnitType(u.type).teleport.uses ?? null) : 0;
     return game;
   }
 
@@ -133,6 +146,12 @@ export class Game {
 
   unitAt(x, y) {
     return this.state.units.find((u) => u.x === x && u.y === y) ?? null;
+  }
+
+  get mines() { return this.state.mines; }
+
+  mineAt(x, y) {
+    return this.state.mines.find((m) => m.x === x && m.y === y) ?? null;
   }
 
   projectileAt(x, y) {
@@ -198,7 +217,13 @@ export class Game {
     const unitId = id ?? this.state.nextUnitId;
     if (this.getUnit(unitId)) throw new Error(`Unit id ${unitId} already exists`);
     this.state.nextUnitId = Math.max(this.state.nextUnitId, unitId + 1);
-    const unit = { id: unitId, team, type, x, y, speed, quickMoves: team === Teams.PLAYER ? 1 : 0, charges: def.charge?.uses ?? 0 };
+    const unit = {
+      id: unitId, team, type, x, y, speed,
+      quickMoves: team === Teams.PLAYER ? 1 : 0,
+      charges: def.charge?.uses ?? 0,
+      // Teleports left: null = unlimited, 0 = none.
+      teleports: def.teleport ? (def.teleport.uses ?? null) : 0,
+    };
     this.state.units.push(unit);
     this.state.units.sort((a, b) => a.id - b.id);
     return unit;
@@ -243,6 +268,18 @@ export class Game {
       if (d === undefined) throw new Error(`Invalid order: unit ${unitId} has no route to ${order.x},${order.y}`);
       if (d > unit.speed) {
         throw new Error(`Invalid order: too far. Unit ${unitId} can move up to ${unit.speed} hex${unit.speed === 1 ? '' : 'es'} this turn (${order.x},${order.y} is ${d} away)`);
+      }
+    }
+    if (order.type === OrderType.TELEPORT) {
+      const tp = getUnitType(unit.type).teleport;
+      if (unit.teleports === 0) throw new Error(`Unit ${unitId} has no teleport left`);
+      if (!this.isWalkable(order.x, order.y)) {
+        throw new Error(`Invalid order: units can't stand on ${getTerrainType(this.terrainAt(order.x, order.y)).name}`);
+      }
+      const d = hexDistance(unit.x, unit.y, order.x, order.y);
+      if (d === 0) throw new Error('Invalid order: teleport somewhere else');
+      if (d > tp.distance) {
+        throw new Error(`Invalid order: too far. Unit ${unitId} can teleport up to ${tp.distance} hexes (${order.x},${order.y} is ${d} away)`);
       }
     }
     if (order.quick && !(unit.quickMoves > 0)) throw new Error(`Unit ${unitId} has no quick move left`);
@@ -304,21 +341,39 @@ export class Game {
         return;
       }
 
+      if (order.type === OrderType.TELEPORT) {
+        const occupant = this.unitAt(order.x, order.y);
+        if (occupant) {
+          // The landing hex was taken earlier in the queue: nothing happens.
+          events.push({ type: 'blocked', step: stepNo, unitId: unit.id, at: [unit.x, unit.y], reason: 'occupied', by: occupant.id });
+          return;
+        }
+        if (unit.teleports !== null) unit.teleports -= 1;
+        const from = [unit.x, unit.y];
+        const tp = getUnitType(unit.type).teleport;
+        const hazard = this.enterHex(unit, order.x, order.y);
+        events.push({ type: 'teleported', step: stepNo, unitId: unit.id, from, to: [unit.x, unit.y] });
+        if (tp.leavesMine) {
+          const mine = { id: this.state.nextMineId++, x: from[0], y: from[1], ownerId: unit.id, team: unit.team };
+          this.state.mines.push(mine);
+          events.push({ type: 'minePlaced', step: stepNo, mineId: mine.id, unitId: unit.id, at: from });
+        }
+        if (hazard) this.setOff(unit, hazard, events, stepNo);
+        return;
+      }
+
       if (order.type === OrderType.CHARGE) {
         unit.charges -= 1;
         events.push({ type: 'charge', step: stepNo, unitId: unit.id, dir: order.dir, remaining: unit.charges });
         const plan = chargePlan(this, unit, order.dir);
         const path = [[unit.x, unit.y]];
         for (const [x, y] of plan.path.slice(1)) {
-          unit.x = x;
-          unit.y = y;
+          const hazard = this.enterHex(unit, x, y);
           path.push([x, y]);
-          const p = this.projectileAt(x, y);
-          if (p) {
-            // Charged into a projectile in flight.
-            this.removeProjectile(p);
+          if (hazard) {
+            // Charged into a projectile in flight or onto a mine: no strike.
             events.push({ type: 'moved', step: stepNo, unitId: unit.id, from: path[0], to: [x, y], path });
-            this.kill(unit, { cause: 'projectile', sourceId: p.id, attackerId: p.ownerId }, events, stepNo);
+            this.setOff(unit, hazard, events, stepNo);
             return;
           }
         }
@@ -394,19 +449,16 @@ export class Game {
         events.push({ type: 'blocked', step: stepNo, unitId: unit.id, at: [unit.x, unit.y], reason: 'occupied', by: occupant.id });
         break;
       }
-      unit.x = next.x;
-      unit.y = next.y;
+      const hazard = this.enterHex(unit, next.x, next.y);
       path.push([unit.x, unit.y]);
-      const p = this.projectileAt(unit.x, unit.y);
-      if (p) {
-        // Walked into a projectile in flight.
-        this.removeProjectile(p);
-        this.kill(unit, { cause: 'projectile', sourceId: p.id, attackerId: p.ownerId }, events, stepNo);
+      if (hazard) {
+        events.push({ type: 'moved', step: stepNo, unitId: unit.id, from: path[0], to: [unit.x, unit.y], path });
+        this.setOff(unit, hazard, events, stepNo);
         alive = false;
         break;
       }
     }
-    if (path.length > 1) {
+    if (alive && path.length > 1) {
       events.push({ type: 'moved', step: stepNo, unitId: unit.id, from: path[0], to: path[path.length - 1], path });
     }
     if (alive && unit.x === order.x && unit.y === order.y) {
@@ -451,6 +503,34 @@ export class Game {
       if (other && other.team !== unit.team) return other;
     }
     return null;
+  }
+
+  /**
+   * Put a unit on (x, y). Returns what it set off there, if anything: a
+   * projectile in flight or a mine. (The caller reports the move first, then
+   * calls setOff.)
+   */
+  enterHex(unit, x, y) {
+    unit.x = x;
+    unit.y = y;
+    const p = this.projectileAt(x, y);
+    if (p) return { kind: 'projectile', p };
+    const m = this.mineAt(x, y);
+    if (m) return { kind: 'mine', m };
+    return null;
+  }
+
+  /** A unit set off a projectile or mine on its hex: it dies, and that's used up. */
+  setOff(unit, hazard, events, stepNo) {
+    if (hazard.kind === 'projectile') {
+      this.removeProjectile(hazard.p);
+      this.kill(unit, { cause: 'projectile', sourceId: hazard.p.id, attackerId: hazard.p.ownerId }, events, stepNo);
+    } else {
+      const m = hazard.m;
+      this.state.mines = this.state.mines.filter((x) => x.id !== m.id);
+      events.push({ type: 'mineExploded', step: stepNo, mineId: m.id, at: [m.x, m.y], unitId: unit.id });
+      this.kill(unit, { cause: 'mine', sourceId: m.id, attackerId: m.ownerId }, events, stepNo);
+    }
   }
 
   removeProjectile(p) {
