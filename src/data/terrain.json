@@ -1,0 +1,10 @@
+{
+  "default": "grass",
+  "types": {
+    "grass":  { "name": "Grass",  "char": ".", "color": "#22331f", "walkable": true },
+    "road":   { "name": "Road",   "char": "=", "color": "#4a3f30", "walkable": true },
+    "forest": { "name": "Forest", "char": "f", "color": "#16261a", "walkable": true },
+    "sand":   { "name": "Sand",   "char": "s", "color": "#4d4630", "walkable": true },
+    "water":  { "name": "Water",  "char": "~", "color": "#173450", "walkable": false }
+  }
+}

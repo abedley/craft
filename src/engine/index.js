@@ -1,4 +1,9 @@
-export { Game, Teams, MAX_SPEED, nextStep, strikeCells, hashState, canonicalJSON } from './game.js';
+export {
+  Game, Teams, MAX_SPEED, nextStep, isWalkable, distancesTo, strikeCells, hashState, canonicalJSON,
+} from './game.js';
+export {
+  TerrainTypes, DEFAULT_TERRAIN, getTerrainType, terrainForChar, defineTerrainType, registerTerrainTypes,
+} from './terrain.js';
 export { move, quickMove, attack, validateOrder, OrderType } from './orders.js';
 export {
   Directions, ALL_DIRECTIONS, OPPOSITE, DIRECTION_ANGLES,

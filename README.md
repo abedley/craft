@@ -23,9 +23,11 @@ src/engine/           deterministic game engine (no DOM)
   game.js             Game state, order queue, tick(), projectiles
   hex.js              hex grid geometry (directions, distance, lines)
   unitTypes.js        loads + validates unit definitions from JSON
+  terrain.js          loads + validates terrain definitions from JSON
   orders.js           order constructors + validation (move, attack)
   resolve.js          simultaneous move / collision resolution
 src/data/units.json   unit definitions (add new units here)
+src/data/terrain.json terrain definitions (add new terrain here)
 src/match.js          turn structure: CPU stages orders, player orders, end turn
 src/ai/cpu.js         deterministic CPU opponent
 src/ui/               canvas renderer + debug controls
@@ -95,6 +97,38 @@ Distances are hex steps. Internally the geometry uses axial coordinates; `step`,
 `neighbors` and `hexLineStep` are exported for other code. Saved states are tagged `grid: 'hex'`, and
 square-grid saves from earlier versions are rejected with a clear error.
 
+## Terrain
+
+Every hex has a terrain type, defined in **`src/data/terrain.json`** (validated on load, like units):
+
+```json
+{
+  "default": "grass",
+  "types": {
+    "grass":  { "name": "Grass",  "char": ".", "color": "#22331f", "walkable": true },
+    "road":   { "name": "Road",   "char": "=", "color": "#4a3f30", "walkable": true },
+    "forest": { "name": "Forest", "char": "f", "color": "#16261a", "walkable": true },
+    "sand":   { "name": "Sand",   "char": "s", "color": "#4d4630", "walkable": true },
+    "water":  { "name": "Water",  "char": "~", "color": "#173450", "walkable": false }
+  }
+}
+```
+
+**The only terrain rule so far: units can't stand on or move into a hex that isn't `walkable`
+(water).** Placing a unit there or ordering a move onto it is rejected. Projectiles and melee strikes
+ignore terrain: you can shoot across a river.
+
+- **Pathfinding:** units walk the shortest route around unwalkable hexes. Among equally short routes
+  they prefer the straight hex line, so in open ground they move exactly as before. Other units are
+  not avoided (that's what the collision rules handle). With no route at all, a unit stays put.
+- **Maps:** pass `terrain` to `new Game` as one string per row, one `char` per hex, e.g.
+  `'~=~~~~=~'`. Omit it for all-default. `game.terrainAt(x, y)`, `game.isWalkable(x, y)` and
+  `game.setTerrain(x, y, type)` read and edit it (you can't make an occupied hex unwalkable).
+- **Saves:** terrain is part of the saved state and the state hash.
+- **CPU:** "nearest" means walking distance, and gunslingers only pick firing hexes they can stand on
+  and reach.
+- **Adding a terrain type** is a JSON-only change. New *rules* (e.g. movement cost, cover) need code.
+
 ## Engine model
 
 - The world is a `width x height` hex grid; each hex holds at most one unit.
@@ -106,9 +140,8 @@ square-grid saves from earlier versions are rejected with a clear error.
 - `tick()`:
   1. applies queued orders in queue order (see *Combat* for `attack`),
   2. moves units in timed **sub-steps** (see *Speed* below); at each sub-step every unit
-     due to step moves one hex toward its target along a straight hex line (always a shortest
-     path, never off the board; no pathfinding around units yet) and those steps are resolved
-     **simultaneously**,
+     due to step moves one hex along a shortest walkable route to its target (straight hex line
+     where possible; see *Terrain*) and those steps are resolved **simultaneously**,
   3. units that reached their target drop their order.
   It returns an event list (`orderApplied`, `moved` with the full `path`, `blocked` with the
   sub-step `time` it first happened, `arrived`, `shot`, `strike`, `projectileMoved`, `killed`,
@@ -235,10 +268,12 @@ UI header, so two runs with the same orders can be compared at a glance.
 
 ## Debug UI
 
-- Starts on **Skirmish vs CPU**. CPU orders are already staged when your turn starts (pink dashed
+- Starts on **Skirmish vs CPU** (a river with two bridges; **Open field vs CPU** has no terrain). CPU orders are already staged when your turn starts (pink dashed
   lines, listed first in the Queue tab); tap **End turn** when your orders are in. The header shows
   YOU WIN / YOU LOSE / DRAW when a side is wiped out.
 - **Move** mode: tap one of your units to select it, tap an empty cell to queue `move(x, y)`.
+- **Paint** mode: pick a terrain type and tap or drag across hexes to paint it. The CPU re-plans
+  afterwards.
 - **Quick** mode: the same, but queues that unit's one-time quick move (drawn in cyan, listed first in
   the queue). Units that still have their quick move show a small lightning pip.
 - **Attack** mode: tap one of your units, then tap any cell or unit to attack toward it, snapped to the

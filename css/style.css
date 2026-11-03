@@ -79,7 +79,9 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.on { border-color: var(--ok); color: var(--ok); }
 
 .segmented { gap: 0; }
-.segmented button { border-radius: 0; padding: 0 4px; }
+.segmented button { border-radius: 0; padding: 0 2px; font-size: 14px; }
+#terrain-row[hidden], #unit-row[hidden] { display: none; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; border: 1px solid rgba(255,255,255,0.35); }
 .segmented button:first-child { border-radius: 8px 0 0 8px; }
 .segmented button:last-child { border-radius: 0 8px 8px 0; }
 .segmented button.active { background: var(--line); border-color: var(--accent); }

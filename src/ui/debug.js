@@ -11,6 +11,8 @@
 //   Speed        - with a unit selected, sets that unit's speed (cells per
 //                  tick); otherwise sets the speed used for new units.
 //   Remove mode  - tap a unit to delete it.
+//   Paint mode   - pick a terrain type, then tap or drag across hexes to
+//                  paint it (water can't be painted under a unit).
 //
 // Turns: the CPU stages its orders as soon as a turn starts (they show up in
 // the queue first). The player then orders their own (blue) units and taps
@@ -18,7 +20,7 @@
 // makes the CPU re-plan. "Back" restores the snapshot taken just before the
 // last "End turn", including both sides' staged orders (an exact undo).
 
-import { Game, Teams, MAX_SPEED, move, quickMove, attack, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
+import { Game, Teams, MAX_SPEED, move, quickMove, attack, TerrainTypes, DEFAULT_TERRAIN, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
 import { Match, MatchStatus } from '../match.js';
 import { Renderer } from './renderer.js';
 import { scenarios } from '../scenarios.js';
@@ -38,11 +40,14 @@ export class DebugUI {
     this.newUnitType = DEFAULT_UNIT_TYPE;
     this.newUnitSpeed = UnitTypes[DEFAULT_UNIT_TYPE].speed;
     this.newUnitTeam = Teams.PLAYER;
+    this.paintTerrain = DEFAULT_TERRAIN;
+    this.painting = false;
 
     this.populateScenarios();
     this.populateSpeeds();
     this.populateTypes();
     this.populateTeams();
+    this.populateTerrain();
     this.bind();
     this.loadScenario(Object.keys(scenarios)[0]);
     this.renderer.resize(this.game);
@@ -85,6 +90,33 @@ export class DebugUI {
       if (this.mode !== 'add') this.setMode('add');
       this.hint(`New units join ${sel.value === Teams.CPU ? 'the CPU' : 'your team'}. Tap an empty cell.`);
     });
+  }
+
+  populateTerrain() {
+    const row = $('#terrain-row');
+    for (const def of Object.values(TerrainTypes)) {
+      const btn = document.createElement('button');
+      btn.dataset.terrain = def.key;
+      btn.innerHTML = `<span class="swatch" style="background:${def.color}"></span>${def.name}`;
+      btn.addEventListener('click', () => {
+        this.paintTerrain = def.key;
+        this.hint(`Painting ${def.name}${def.walkable ? '' : ' (units can\'t walk on it)'}. Tap or drag on the board.`);
+        this.render();
+      });
+      row.append(btn);
+    }
+  }
+
+  /** Paint one hex; returns true if it changed. */
+  paintAt(x, y) {
+    if (this.game.terrainAt(x, y) === this.paintTerrain) return false;
+    try {
+      this.game.setTerrain(x, y, this.paintTerrain);
+      return true;
+    } catch (err) {
+      this.hint(err.message, true);
+      return false;
+    }
   }
 
   /** Swap in a (new or restored) game and wrap it in a match. */
@@ -134,8 +166,26 @@ export class DebugUI {
     $('#board').addEventListener('pointerdown', (ev) => {
       ev.preventDefault();
       const cell = this.renderer.cellFromEvent(ev, this.game);
+      if (this.mode === 'paint') {
+        this.painting = true;
+        ev.target.setPointerCapture?.(ev.pointerId);
+      }
       if (cell) this.onCellTap(cell.x, cell.y);
     });
+    // Drag to paint terrain.
+    $('#board').addEventListener('pointermove', (ev) => {
+      if (!this.painting || this.mode !== 'paint') return;
+      const cell = this.renderer.cellFromEvent(ev, this.game);
+      if (cell && this.paintAt(cell.x, cell.y)) this.render();
+    });
+    const stopPainting = () => {
+      if (!this.painting) return;
+      this.painting = false;
+      this.replanCpu(); // terrain changes what the CPU can do
+      this.render();
+    };
+    $('#board').addEventListener('pointerup', stopPainting);
+    $('#board').addEventListener('pointercancel', stopPainting);
 
     document.querySelectorAll('[data-mode]').forEach((btn) => {
       btn.addEventListener('click', () => this.setMode(btn.dataset.mode));
@@ -184,7 +234,9 @@ export class DebugUI {
   setMode(mode) {
     this.mode = mode;
     document.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
-    if (mode === 'add' || mode === 'remove') this.selectedId = null;
+    if (mode === 'add' || mode === 'remove' || mode === 'paint') this.selectedId = null;
+    $('#terrain-row').hidden = mode !== 'paint';
+    $('#unit-row').hidden = mode === 'paint';
     if (mode === 'attack' && this.selectedId !== null && !this.attackOrder(this.game.getUnit(this.selectedId))) {
       this.selectedId = null;
     }
@@ -197,6 +249,7 @@ export class DebugUI {
       attack: 'Tap one of your units, then tap a cell or unit to attack toward it.',
       add: 'Tap an empty cell to add a unit.',
       remove: 'Tap a unit to remove it.',
+      paint: 'Pick a terrain, then tap or drag across hexes to paint it.',
     }[mode]);
     this.render();
   }
@@ -217,6 +270,9 @@ export class DebugUI {
           this.game.addUnit(x, y, undefined, { type: this.newUnitType, team: this.newUnitTeam, speed: this.newUnitSpeed });
           this.replanCpu();
           this.hint(`Added ${this.newUnitTeam === Teams.CPU ? 'CPU' : 'your'} ${UnitTypes[this.newUnitType].name} at ${x},${y}.`);
+          break;
+        case 'paint':
+          this.paintAt(x, y);
           break;
         case 'remove':
           if (!unit) return;
@@ -395,6 +451,7 @@ export class DebugUI {
     const selected = this.selectedId !== null ? g.getUnit(this.selectedId) : null;
     const shownSpeed = selected ? selected.speed : this.newUnitSpeed;
     $('#speed').value = String(shownSpeed);
+    document.querySelectorAll('[data-terrain]').forEach((b) => b.classList.toggle('active', b.dataset.terrain === this.paintTerrain));
     this.renderer.draw(g, { selectedId: this.selectedId, preview: this.computePreview() });
     this.renderPanel();
   }

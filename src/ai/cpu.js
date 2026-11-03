@@ -22,12 +22,14 @@
 //        already planned this turn, stepping in.
 //   3. Move: projectile units walk toward the nearest free cell with a clear
 //      shot (allowed direction, in range, nothing in between) at some enemy;
-//      everyone else walks toward the nearest enemy.
+//      everyone else walks toward the nearest enemy. "Nearest" is walking
+//      distance around terrain units can't cross (e.g. water); firing cells
+//      must be walkable and reachable, but shots fly over any terrain.
 //
 // Distances are hex steps; lines are straight hex lines (see engine/hex.js).
 
 import { move, attack } from '../engine/orders.js';
-import { nextStep, strikeCells } from '../engine/game.js';
+import { nextStep, strikeCells, distancesTo } from '../engine/game.js';
 import { getUnitType, AttackKind } from '../engine/unitTypes.js';
 import { step, distance, OPPOSITE } from '../engine/hex.js';
 
@@ -72,9 +74,12 @@ export function planTurn(game, team) {
       continue;
     }
 
-    const target = nearest(u, enemies);
-    const dest = (atk?.kind === AttackKind.PROJECTILE && firingPosition(game, u, atk, enemies)) || [target.x, target.y];
-    if (dest[0] !== u.x || dest[1] !== u.y) {
+    // Walking distance from u to every hex it can reach (terrain-aware).
+    const walk = distancesTo(game, u.x, u.y);
+    const target = nearest(u, enemies, walk);
+    const dest = (atk?.kind === AttackKind.PROJECTILE && firingPosition(game, u, atk, enemies, walk))
+      || (target && [target.x, target.y]);
+    if (dest && (dest[0] !== u.x || dest[1] !== u.y)) {
       plan.push([u.id, move(dest[0], dest[1])]);
       planMove(u, move(dest[0], dest[1]));
     }
@@ -116,21 +121,24 @@ function bestStrike(game, u, atk, teamCells) {
   return best?.dir ?? null;
 }
 
-function nearest(u, others) {
+/** Nearest enemy by walking distance; null if none can be reached. */
+function nearest(u, others, walk) {
   let best = null;
   for (const o of others) {
-    const d = hexDist(u, o);
+    const d = walk.get(`${o.x},${o.y}`);
+    if (d === undefined) continue;
     if (!best || d < best.d) best = { o, d };
   }
-  return best.o;
+  return best?.o ?? null;
 }
 
 /**
- * Nearest free cell (to u) from which some enemy is the first unit along an
- * allowed firing direction, within range. Ties: nearer enemy, then lower y,
- * then lower x.
+ * Nearest free hex (by walking distance from u) that u can stand on and
+ * reach, from which some enemy is the first unit along an allowed firing
+ * direction, within range. Shots fly over any terrain. Ties: nearer enemy,
+ * then lower y, then lower x.
  */
-function firingPosition(game, u, atk, enemies) {
+function firingPosition(game, u, atk, enemies, walk) {
   let best = null;
   for (const e of enemies) {
     for (const firing of inPriorityOrder(atk.directions)) {
@@ -144,7 +152,9 @@ function firingPosition(game, u, atk, enemies) {
         const occ = game.unitAt(x, y);
         if (occ && occ.id !== u.id) break;
         if (occ) continue; // u's own cell: if a shot existed bestShot would have fired
-        const cand = { x, y, d: hexDist(u, { x, y }), de: hexDist(u, e) };
+        const d = walk.get(`${x},${y}`); // undefined: can't stand there or can't get there
+        if (d === undefined) continue;
+        const cand = { x, y, d, de: hexDist(u, e) };
         if (!best || cand.d < best.d || (cand.d === best.d && (cand.de < best.de
           || (cand.de === best.de && (y < best.y || (y === best.y && x < best.x)))))) {
           best = cand;
@@ -180,7 +190,7 @@ function dodgeCell(game, u) {
     for (const side of DIR_PRIORITY) {
       if (side === p.dir || side === OPPOSITE[p.dir]) continue;
       const [nx, ny] = step(u.x, u.y, side);
-      if (game.inBounds(nx, ny) && !game.unitAt(nx, ny)) return [nx, ny];
+      if (game.isWalkable(nx, ny) && !game.unitAt(nx, ny)) return [nx, ny];
     }
   }
   return null;

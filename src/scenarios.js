@@ -14,10 +14,39 @@ const P = 'player';
 const C = 'cpu';
 const GS = 'gunslinger';
 
-const board = (units = []) => new Game({ width: W, height: H, units });
+const board = (units = [], terrain = null) => new Game({ width: W, height: H, units, terrain });
+
+// Terrain maps: one string per row, one character per hex (src/data/terrain.json):
+//   . grass   = road   f forest   s sand   ~ water (units can't walk on it)
+const RIVER_MAP = [
+  '.=......',
+  '.=...ff.',
+  '.=...ff.',
+  '~=~~~~=~', // a river with two bridges
+  '.s....=.',
+  '.ff...=.',
+  '.ff...=.',
+  '......=.',
+];
+
+const LAKE_MAP = [
+  '........',
+  '........',
+  '..~~~~..',
+  '..~~~~..',
+  '..~~~~..',
+  '...ss...',
+  '........',
+  '........',
+];
 
 export const scenarios = {
   'Skirmish vs CPU': () => board([
+    { x: 1, y: 7, type: GS, team: P }, { x: 3, y: 6, team: P }, { x: 4, y: 7, team: P }, { x: 6, y: 7, type: GS, team: P },
+    { x: 1, y: 0, type: GS, team: C }, { x: 3, y: 0, team: C }, { x: 4, y: 0, team: C }, { x: 6, y: 0, type: GS, team: C },
+  ], RIVER_MAP),
+
+  'Open field vs CPU': () => board([
     { x: 1, y: 7, type: GS, team: P }, { x: 3, y: 6, team: P }, { x: 4, y: 7, team: P }, { x: 6, y: 7, type: GS, team: P },
     { x: 1, y: 0, type: GS, team: C }, { x: 3, y: 0, team: C }, { x: 4, y: 0, team: C }, { x: 6, y: 0, type: GS, team: C },
   ]),
@@ -27,6 +56,14 @@ export const scenarios = {
   'Empty board': () => board(),
 
   'Sandbox': () => board([{ x: 1, y: 1 }, { x: 6, y: 1 }, { x: 1, y: 6 }, { x: 6, y: 6 }, { x: 3, y: 3 }]),
+
+  'Terrain: walk around a lake': () => {
+    // Units path around water; Preview shows the route bending round the lake.
+    const g = board([{ x: 3, y: 0 }, { x: 4, y: 7, type: GS }], LAKE_MAP);
+    g.queueOrder(1, move(3, 7));
+    g.queueOrder(2, attack('up')); // shots fly over water
+    return g;
+  },
 
   'Contest (first ordered wins)': () => {
     const g = board([{ x: 3, y: 1 }, { x: 3, y: 3 }]);

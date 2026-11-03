@@ -6,7 +6,7 @@
 // neighbouring hex centres and is used to scale everything drawn in a cell.
 
 import {
-  UnitTypes, AttackKind, strikeCells, step, fromAxial, axialRound, DIRECTION_ANGLES,
+  UnitTypes, AttackKind, strikeCells, getTerrainType, step, fromAxial, axialRound, DIRECTION_ANGLES,
 } from '../engine/index.js';
 
 const SQRT3 = Math.sqrt(3);
@@ -18,7 +18,6 @@ function boardExtent(game) {
 
 const COLORS = {
   grid: '#2b323c',
-  bg: '#1a1f26',
   selected: '#ffffff',
   activeOrder: 'rgba(255,255,255,0.35)',
   queuedOrder: '#ffd166',
@@ -103,16 +102,18 @@ export class Renderer {
     this.layout(game);
     ctx.clearRect(0, 0, this.cssW, this.cssH);
 
-    // Grid.
-    ctx.fillStyle = COLORS.bg;
+    // Grid: each hex filled with its terrain colour.
     ctx.strokeStyle = COLORS.grid;
     ctx.lineWidth = 1;
     for (let x = 0; x < game.width; x++) {
       for (let y = 0; y < game.height; y++) {
         const [cx, cy] = this.center(x, y);
+        const terrain = getTerrainType(game.terrainAt(x, y));
+        ctx.fillStyle = terrain.color;
         this.hexPath(cx, cy, this.size - 0.5);
         ctx.fill();
         ctx.stroke();
+        if (!terrain.walkable) this.drawUnwalkable(cx, cy);
       }
     }
 
@@ -281,6 +282,23 @@ export class Renderer {
     ctx.moveTo(cx + m, cy - m); ctx.lineTo(cx - m, cy + m);
     ctx.stroke();
     ctx.lineCap = 'butt';
+  }
+
+  /** Two faint wave strokes so unwalkable hexes read differently, not just by colour. */
+  drawUnwalkable(cx, cy) {
+    const { ctx, size } = this;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.lineWidth = 1.5;
+    for (const dy of [-0.18, 0.18]) {
+      ctx.beginPath();
+      const y = cy + dy * size;
+      ctx.moveTo(cx - size * 0.45, y);
+      ctx.bezierCurveTo(cx - size * 0.2, y - size * 0.15, cx, y + size * 0.15, cx + size * 0.2, y);
+      ctx.bezierCurveTo(cx + size * 0.3, y - size * 0.08, cx + size * 0.4, y - size * 0.08, cx + size * 0.45, y);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   /** Small lightning-bolt pip: this unit still has its quick move. */

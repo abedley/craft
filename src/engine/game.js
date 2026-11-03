@@ -7,10 +7,12 @@
 //   * State is plain JSON so it can be snapshotted, hashed and replayed.
 
 import { validateOrder, OrderType } from './orders.js';
-import { step, distance, hexLineStep, neighbors } from './hex.js';
+import { step, hexLineStep, neighbors } from './hex.js';
 import { resolveMoves } from './resolve.js';
 import * as Units from './unitTypes.js';
 import { getUnitType, AttackKind, MAX_SPEED } from './unitTypes.js';
+import * as Terrain from './terrain.js';
+import { getTerrainType, terrainForChar } from './terrain.js';
 
 export { MAX_SPEED };
 
@@ -21,9 +23,12 @@ export const Teams = Object.freeze({ PLAYER: 'player', CPU: 'cpu' });
 export class Game {
   /**
    * @param {{width:number,height:number,
+   *          terrain?:string[],
    *          units?:Array<{x:number,y:number,id?:number,type?:string,team?:string,speed?:number}>}} opts
+   *   terrain: one string per row, one character per hex, using each terrain
+   *   type's "char" (see terrain.js), e.g. "..==~~..". Omit for all-default.
    */
-  constructor({ width, height, units = [] }) {
+  constructor({ width, height, units = [], terrain = null }) {
     if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
       throw new Error('Grid width and height must be positive integers');
     }
@@ -38,6 +43,8 @@ export class Game {
       units: [], // kept sorted by id
       projectiles: [], // kept sorted by id
       queue: [], // [{ unitId, order }]
+      // Terrain type key per hex, row-major: terrain[y * width + x].
+      terrain: parseTerrain(terrain, width, height),
     };
     for (const u of units) this.addUnit(u.x, u.y, u.id, { type: u.type, team: u.team, speed: u.speed });
   }
@@ -51,6 +58,7 @@ export class Game {
     }
     game.state = structuredClone(snapshot);
     for (const u of game.state.units) u.quickMoves ??= u.team === Teams.PLAYER ? 1 : 0;
+    game.state.terrain ??= parseTerrain(null, snapshot.width, snapshot.height);
     return game;
   }
 
@@ -79,6 +87,28 @@ export class Game {
     return this.state.units.find((u) => u.x === x && u.y === y) ?? null;
   }
 
+  get terrain() { return this.state.terrain; }
+
+  /** Terrain type key of a hex. */
+  terrainAt(x, y) {
+    if (!this.inBounds(x, y)) throw new Error(`Cell ${x},${y} is out of bounds`);
+    return this.state.terrain[y * this.state.width + x];
+  }
+
+  /** Can a unit stand on this hex (on the board and walkable terrain)? */
+  isWalkable(x, y) {
+    return isWalkable(this.state, x, y);
+  }
+
+  /** Change one hex's terrain. Can't make an occupied hex unwalkable. */
+  setTerrain(x, y, type) {
+    if (!this.inBounds(x, y)) throw new Error(`Cell ${x},${y} is out of bounds`);
+    const def = getTerrainType(type);
+    const unit = this.unitAt(x, y);
+    if (unit && !def.walkable) throw new Error(`Unit ${unit.id} is standing on ${x},${y}`);
+    this.state.terrain[y * this.state.width + x] = type;
+  }
+
   inBounds(x, y) {
     return x >= 0 && y >= 0 && x < this.state.width && y < this.state.height;
   }
@@ -103,6 +133,7 @@ export class Game {
     validateSpeed(speed);
     if (!Object.values(Teams).includes(team)) throw new Error(`Unknown team "${team}"`);
     if (this.unitAt(x, y)) throw new Error(`Cell ${x},${y} is occupied`);
+    if (!this.isWalkable(x, y)) throw new Error(`Units can't stand on ${getTerrainType(this.terrainAt(x, y)).name}`);
     const unitId = id ?? this.state.nextUnitId;
     if (this.getUnit(unitId)) throw new Error(`Unit id ${unitId} already exists`);
     this.state.nextUnitId = Math.max(this.state.nextUnitId, unitId + 1);
@@ -144,6 +175,9 @@ export class Game {
     if (!unit) throw new Error(`No unit with id ${unitId}`);
     const err = validateOrder(order, this.state, getUnitType(unit.type));
     if (err) throw new Error(`Invalid order: ${err}`);
+    if (order.type === OrderType.MOVE && !this.isWalkable(order.x, order.y)) {
+      throw new Error(`Invalid order: units can't walk on ${getTerrainType(this.terrainAt(order.x, order.y)).name}`);
+    }
     if (order.quick && !(unit.quickMoves > 0)) throw new Error(`Unit ${unitId} has no quick move left`);
     const q = this.state.queue.filter((e) => e.unitId !== unitId);
     const entry = { unitId, order: structuredClone(order) };
@@ -435,29 +469,78 @@ function lcm(a, b) {
 }
 
 /**
- * The cell a unit wants to enter on its next step: one hex toward its move
- * target along a straight hex line. If that cell is off the board (lines can
- * clip the board's zig-zag edges), the in-board neighbour that gets closest
- * to the target is used instead (ties: direction order in hex.js). No
- * pathfinding around units yet: a blocked unit tries again on its next step.
+ * The hex a unit wants to enter on its next step toward its move target.
+ *
+ * Units path around terrain they can't walk on (and the board's edges): the
+ * step is always along a shortest walkable route. Among equally short
+ * routes the straight hex line is preferred, then the direction order in
+ * hex.js, so in open ground units walk straight lines. Other units are not
+ * avoided: a blocked unit tries again on its next step. If the target can't
+ * be reached at all, the unit stays put.
  *
  * @param {{x:number,y:number,order:object|null}} unit
- * @param {{width:number,height:number}} [board] bounds; omit for unbounded
+ * @param {{width:number,height:number,terrain?:string[]}} [board] a Game or
+ *   its state; omit for an unbounded, all-walkable plane
  */
 export function nextStep(unit, board = null) {
   const o = unit.order;
-  if (!o || o.type !== OrderType.MOVE) return { x: unit.x, y: unit.y };
-  if (o.x === unit.x && o.y === unit.y) return { x: unit.x, y: unit.y };
-  const inside = (x, y) => !board || (x >= 0 && y >= 0 && x < board.width && y < board.height);
+  const stay = { x: unit.x, y: unit.y };
+  if (!o || o.type !== OrderType.MOVE) return stay;
+  if (o.x === unit.x && o.y === unit.y) return stay;
   const [lx, ly] = hexLineStep(unit.x, unit.y, o.x, o.y);
-  if (inside(lx, ly)) return { x: lx, y: ly };
-  let best = null;
+  if (!board) return { x: lx, y: ly };
+
+  const dist = distancesTo(board, o.x, o.y);
+  const here = dist.get(`${unit.x},${unit.y}`);
+  if (here === undefined) return stay; // unreachable
+  if (dist.get(`${lx},${ly}`) === here - 1) return { x: lx, y: ly };
   for (const [, x, y] of neighbors(unit.x, unit.y)) {
-    if (!inside(x, y)) continue;
-    const d = distance(x, y, o.x, o.y);
-    if (!best || d < best.d) best = { x, y, d };
+    if (dist.get(`${x},${y}`) === here - 1) return { x, y };
   }
-  return best && best.d < distance(unit.x, unit.y, o.x, o.y) ? { x: best.x, y: best.y } : { x: unit.x, y: unit.y };
+  return stay;
+}
+
+/** Is (x, y) on the board and walkable? Works on a Game or its state. */
+export function isWalkable(board, x, y) {
+  if (x < 0 || y < 0 || x >= board.width || y >= board.height) return false;
+  const t = board.terrain?.[y * board.width + x];
+  return t === undefined || getTerrainType(t).walkable;
+}
+
+/**
+ * Walking distance (hex steps over walkable terrain) from every hex that can
+ * reach (tx, ty), as a Map "x,y" -> steps. Breadth-first search from the
+ * target; units are ignored. Empty if the target itself isn't walkable.
+ */
+export function distancesTo(board, tx, ty) {
+  const dist = new Map();
+  if (!isWalkable(board, tx, ty)) return dist;
+  dist.set(`${tx},${ty}`, 0);
+  const frontier = [[tx, ty]];
+  for (let i = 0; i < frontier.length; i++) {
+    const [cx, cy] = frontier[i];
+    const d = dist.get(`${cx},${cy}`);
+    for (const [, nx, ny] of neighbors(cx, cy)) {
+      const k = `${nx},${ny}`;
+      if (dist.has(k) || !isWalkable(board, nx, ny)) continue;
+      dist.set(k, d + 1);
+      frontier.push([nx, ny]);
+    }
+  }
+  return dist;
+}
+
+/** Build the row-major terrain array from map rows (or all default). */
+function parseTerrain(rows, width, height) {
+  if (rows === null || rows === undefined) return Array(width * height).fill(Terrain.DEFAULT_TERRAIN);
+  if (!Array.isArray(rows) || rows.length !== height) throw new Error(`Terrain must have ${height} rows`);
+  const out = [];
+  rows.forEach((row, y) => {
+    const chars = [...row];
+    if (chars.length !== width) throw new Error(`Terrain row ${y} must have ${width} characters`);
+    for (const ch of chars) out.push(terrainForChar(ch));
+  });
+  return out;
 }
 
 /** Canonical JSON (sorted keys) so key insertion order can't change hashes. */
