@@ -17,6 +17,7 @@ test('each player unit starts with one quick move; CPU units have none', () => {
 
 test('a quick move goes to the front of the queue, ahead of the CPU\'s staged orders', () => {
   const g = new Game({ width: 6, height: 6, units: [{ x: 0, y: 0 }, { x: 5, y: 5, team: C }, { x: 2, y: 5 }] });
+  g.getUnit(2).charges = 0; // no CPU charge (that would lead the front section; see charge.test.js)
   const m = new Match(g);
   m.startTurn();
   m.playerOrder(3, move(2, 3));

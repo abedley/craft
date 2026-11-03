@@ -5,6 +5,7 @@
       "name": "Pikeman",
       "speed": 1,
       "shape": "circle",
+      "charge": { "distance": 3, "uses": 1 },
       "attack": {
         "kind": "melee",
         "reach": 2,

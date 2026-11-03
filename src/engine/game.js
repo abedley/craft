@@ -12,13 +12,14 @@
 // An entry may also carry `carried: true` (left over from last turn).
 //
 // Where entries go (see queueOrder and match.js):
-//   1. quick moves                      (very front)
+//   1. quick moves and charges          (very front, in the order given)
 //   2. carried over from last turn      (in the order they ran last turn)
 //   3. the CPU's new orders             (it stages its plan first)
 //   4. the player's new orders
 //
 // What each entry does when its turn comes:
-//   move        The unit walks up to `speed` hexes along its route. It stops
+//   move        The unit walks up to `speed` hexes along its route (a charge:
+//               up to its type's charge distance, 3 for pikemen). It stops
 //               early if the next hex is occupied (whoever is there got there
 //               first). Walking into a hex with a projectile in it is a hit.
 //               If it hasn't arrived, the order carries over to next turn.
@@ -36,7 +37,7 @@
 //
 // Determinism: no randomness, clock or DOM; state is plain JSON.
 
-import { validateOrder, OrderType } from './orders.js';
+import { validateOrder, OrderType, goesToFront } from './orders.js';
 import { step, hexLineStep, neighbors } from './hex.js';
 import * as Units from './unitTypes.js';
 import { getUnitType, AttackKind, MAX_SPEED } from './unitTypes.js';
@@ -169,6 +170,7 @@ export class Game {
    *   type: key of UnitTypes (default: the units file's "default").
    *   team: Teams.PLAYER (default) or Teams.CPU.
    *   Player units start with one quick move (see queueOrder); CPU units have none.
+   *   Units whose type has a charge start with its `uses` charges (either team).
    *   speed: hexes per move; defaults to the type's speed. Overriding it is
    *   meant for debugging/tests.
    */
@@ -183,7 +185,7 @@ export class Game {
     const unitId = id ?? this.state.nextUnitId;
     if (this.getUnit(unitId)) throw new Error(`Unit id ${unitId} already exists`);
     this.state.nextUnitId = Math.max(this.state.nextUnitId, unitId + 1);
-    const unit = { id: unitId, team, type, x, y, speed, quickMoves: team === Teams.PLAYER ? 1 : 0 };
+    const unit = { id: unitId, team, type, x, y, speed, quickMoves: team === Teams.PLAYER ? 1 : 0, charges: def.charge?.uses ?? 0 };
     this.state.units.push(unit);
     this.state.units.sort((a, b) => a.id - b.id);
     return unit;
@@ -205,13 +207,14 @@ export class Game {
    * Queue an order for a unit. A unit has at most one queue entry: a new
    * order replaces its old one (including one carried over from last turn).
    *
-   * Placement: a quick move goes to the very front (after any other quick
-   * moves); any other order goes to the back. (match.js puts the CPU's plan
-   * ahead of the player's new orders.) A quick move is only used up when it
+   * Placement: quick moves and charges go to the very front (after any
+   * other quick moves and charges already there); any other order goes to
+   * the back. (match.js puts the CPU's plan
+   * ahead of the player's new orders.) A quick move or charge is only used up when it
    * runs, so replacing or clearing it first costs nothing.
    *
    * Throws if the order is invalid (wrong for the unit's type, a move onto
-   * unwalkable terrain, or a quick move the unit doesn't have).
+   * unwalkable terrain, or a quick move or charge the unit doesn't have).
    */
   queueOrder(unitId, order) {
     const unit = this.getUnit(unitId);
@@ -222,11 +225,12 @@ export class Game {
       throw new Error(`Invalid order: units can't walk on ${getTerrainType(this.terrainAt(order.x, order.y)).name}`);
     }
     if (order.quick && !(unit.quickMoves > 0)) throw new Error(`Unit ${unitId} has no quick move left`);
+    if (order.charge && !(unit.charges > 0)) throw new Error(`Unit ${unitId} has no charge left`);
     const q = this.state.queue.filter((e) => e.unitId !== unitId);
     const entry = { unitId, order: structuredClone(order) };
-    if (order.quick) {
-      const firstNonQuick = q.findIndex((e) => !e.order?.quick);
-      q.splice(firstNonQuick === -1 ? q.length : firstNonQuick, 0, entry);
+    if (goesToFront(order)) {
+      const firstOther = q.findIndex((e) => !goesToFront(e.order));
+      q.splice(firstOther === -1 ? q.length : firstOther, 0, entry);
     } else {
       q.push(entry);
     }
@@ -281,8 +285,14 @@ export class Game {
           unit.quickMoves -= 1;
           events.push({ type: 'quickMove', step: stepNo, unitId: unit.id, remaining: unit.quickMoves });
         }
-        if (this.walk(unit, order, events, stepNo)) {
-          const { quick, ...rest } = order; // a carried quick move is an ordinary move now
+        if (order.charge) {
+          unit.charges -= 1;
+          events.push({ type: 'charge', step: stepNo, unitId: unit.id, remaining: unit.charges });
+        }
+        const distance = order.charge ? getUnitType(unit.type).charge.distance : unit.speed;
+        if (this.walk(unit, order, events, stepNo, distance)) {
+          // A carried quick move or charge is an ordinary walk from then on.
+          const { quick, charge, ...rest } = order;
           carried.push({ unitId: unit.id, order: rest, carried: true });
         }
         return;
@@ -324,10 +334,10 @@ export class Game {
    * Walk a unit up to its speed toward the order's target. Returns true if
    * the order should carry over (not arrived, unit alive).
    */
-  walk(unit, order, events, stepNo) {
+  walk(unit, order, events, stepNo, distance = unit.speed) {
     const path = [[unit.x, unit.y]];
     let alive = true;
-    for (let k = 0; k < unit.speed; k++) {
+    for (let k = 0; k < distance; k++) {
       if (unit.x === order.x && unit.y === order.y) break;
       const next = nextStep({ x: unit.x, y: unit.y, order }, this.state);
       if (next.x === unit.x && next.y === unit.y) {

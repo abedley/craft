@@ -5,7 +5,7 @@
 // The board is flat-topped hexes (see engine/hex.js). Columns are straight
 // up/down lines, so most demos run down column 3.
 
-import { Game, move, attack } from './engine/index.js';
+import { Game, move, attack, charge } from './engine/index.js';
 
 const W = 8;
 const H = 8;
@@ -155,6 +155,17 @@ export const scenarios = {
     g.queueOrder(1, attack('down'));
     g.queueOrder(4, attack('down'));
     g.queueOrder(6, move(6, 1));
+    return g;
+  },
+
+  'Pikeman: charge': () => {
+    // Gunslinger 3 (CPU team) is about to shoot down at gunslinger 1. Pikeman
+    // 2 charges 3 hexes up next to it: the charge is at the front of the
+    // queue, so when the shot comes up an enemy is beside the gunslinger and
+    // the shot fails.
+    const g = board([{ x: 1, y: 3, type: GS }, { x: 0, y: 4 }, { x: 1, y: 0, type: GS, team: C }]);
+    g.queueOrder(3, attack('down'));
+    g.queueOrder(2, charge(0, 1));
     return g;
   },
 

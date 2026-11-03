@@ -22,7 +22,10 @@
 //        within reach, as the board stands now, and never when a teammate
 //        would be in the strike: either standing there or, for a teammate
 //        already planned this turn, stepping in.
-//   3. Move: projectile units walk toward the nearest free cell with a clear
+//   3. Charge (units with charges left): if the nearest enemy is too far to
+//      reach this turn with a normal move but a charge would end next to it,
+//      charge at it.
+//   4. Move: projectile units walk toward the nearest free cell with a clear
 //      shot (allowed direction, in range, nothing in between, and not next to
 //      an enemy if that would block the shot) at some enemy;
 //      everyone else walks toward the nearest enemy. "Nearest" is walking
@@ -31,7 +34,7 @@
 //
 // Distances are hex steps; lines are straight hex lines (see engine/hex.js).
 
-import { move, attack } from '../engine/orders.js';
+import { move, attack, charge } from '../engine/orders.js';
 import { nextStep, strikeCells, distancesTo } from '../engine/game.js';
 import { getUnitType, AttackKind } from '../engine/unitTypes.js';
 import { step, distance, OPPOSITE, neighbors } from '../engine/hex.js';
@@ -60,7 +63,8 @@ export function planTurn(game, team) {
   };
 
   for (const u of mine) {
-    const atk = getUnitType(u.type).attack;
+    const def = getUnitType(u.type);
+    const atk = def.attack;
 
     const dodge = dodgeCell(game, u);
     if (dodge) {
@@ -80,6 +84,18 @@ export function planTurn(game, team) {
     // Walking distance from u to every hex it can reach (terrain-aware).
     const walk = distancesTo(game, u.x, u.y);
     const target = nearest(u, enemies, walk);
+
+    // Charge: if a normal move can't reach the nearest enemy this turn but a
+    // charge can (ending next to it, ready to strike next turn), charge.
+    if (def.charge && u.charges > 0 && target) {
+      const d = walk.get(`${target.x},${target.y}`);
+      if (d > u.speed + 1 && d <= def.charge.distance + 1) {
+        plan.push([u.id, charge(target.x, target.y)]);
+        planMove(u, move(target.x, target.y));
+        continue;
+      }
+    }
+
     const dest = (atk?.kind === AttackKind.PROJECTILE && firingPosition(game, u, atk, enemies, walk))
       || (target && [target.x, target.y]);
     if (dest && (dest[0] !== u.x || dest[1] !== u.y)) {

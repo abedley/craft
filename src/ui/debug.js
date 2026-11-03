@@ -20,7 +20,7 @@
 // makes the CPU re-plan. "Back" restores the snapshot taken just before the
 // last "End turn", including both sides' staged orders (an exact undo).
 
-import { Game, Teams, MAX_SPEED, move, quickMove, attack, TerrainTypes, DEFAULT_TERRAIN, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
+import { Game, Teams, MAX_SPEED, move, quickMove, charge, attack, TerrainTypes, DEFAULT_TERRAIN, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
 import { Match, MatchStatus } from '../match.js';
 import { Renderer } from './renderer.js';
 import { scenarios } from '../scenarios.js';
@@ -243,9 +243,13 @@ export class DebugUI {
     if (mode === 'quick' && this.selectedId !== null && !(this.game.getUnit(this.selectedId)?.quickMoves > 0)) {
       this.selectedId = null;
     }
+    if (mode === 'charge' && this.selectedId !== null && !(this.game.getUnit(this.selectedId)?.charges > 0)) {
+      this.selectedId = null;
+    }
     this.hint({
       move: 'Tap a unit to select it, then tap a cell to queue a move.',
       quick: 'Quick move (once per unit): steps first, before shots fly, and wins ties. Tap a unit, then a hex.',
+      charge: 'Charge (pikemen, once each): up to 3 hexes, at the front of the queue. Tap a pikeman, then a hex.',
       attack: 'Tap one of your units, then tap a cell or unit to attack toward it.',
       add: 'Tap an empty cell to add a unit.',
       remove: 'Tap a unit to remove it.',
@@ -308,8 +312,10 @@ export class DebugUI {
         }
         case 'move':
         case 'quick':
+        case 'charge':
         default: {
           const quick = this.mode === 'quick';
+          const isCharge = this.mode === 'charge';
           if (unit && unit.id === this.selectedId) {
             this.selectedId = null;
             this.hint('Deselected.');
@@ -318,13 +324,21 @@ export class DebugUI {
           } else if (unit && quick && !(unit.quickMoves > 0)) {
             this.hint(`Unit ${unit.id} has already used its quick move.`, true);
             return;
+          } else if (unit && isCharge && !UnitTypes[unit.type].charge) {
+            this.hint(`${UnitTypes[unit.type].name} units can't charge.`, true);
+            return;
+          } else if (unit && isCharge && !(unit.charges > 0)) {
+            this.hint(`Unit ${unit.id} has already used its charge.`, true);
+            return;
           } else if (unit) {
             this.selectedId = unit.id;
-            this.hint(`Unit ${unit.id} selected. Tap a cell to ${quick ? 'quick move (goes first)' : 'move'}.`);
+            const what = quick ? 'quick move (goes first)'
+              : isCharge ? `charge (up to ${UnitTypes[unit.type].charge.distance} hexes, goes first)` : 'move';
+            this.hint(`Unit ${unit.id} selected. Tap a cell to ${what}.`);
           } else if (this.selectedId !== null) {
-            const order = quick ? quickMove(x, y) : move(x, y);
+            const order = quick ? quickMove(x, y) : isCharge ? charge(x, y) : move(x, y);
             this.match.playerOrder(this.selectedId, order);
-            this.hint(`Queued: unit ${this.selectedId} ${fmtOrder(order)}${quick ? ' at the front of the queue' : ''}.`);
+            this.hint(`Queued: unit ${this.selectedId} ${fmtOrder(order)}${quick || isCharge ? ' at the front of the queue' : ''}.`);
           }
         }
       }
@@ -490,7 +504,7 @@ export class DebugUI {
         const el = $('#tab-units');
         const projLines = g.projectiles.map((p) => `<div class="shot">projectile ${p.id} @ ${p.x},${p.y} → ${p.dir} (from #${p.ownerId})</div>`).join('');
         el.innerHTML = projLines + (g.units.length
-          ? g.units.map((u) => `<div class="${teamClass(u)}">${teamLabel(u)} #${u.id} ${UnitTypes[u.type].name} @ ${u.x},${u.y} spd ${u.speed}${u.quickMoves > 0 ? ' ⚡' : ''} ${g.orderFor(u.id) ? fmtOrder(g.orderFor(u.id)) : '<span class="meta">idle</span>'}</div>`).join('')
+          ? g.units.map((u) => `<div class="${teamClass(u)}">${teamLabel(u)} #${u.id} ${UnitTypes[u.type].name} @ ${u.x},${u.y} spd ${u.speed}${u.quickMoves > 0 ? ' ⚡' : ''}${u.charges > 0 ? ' »' : ''} ${g.orderFor(u.id) ? fmtOrder(g.orderFor(u.id)) : '<span class="meta">idle</span>'}</div>`).join('')
           : '<div class="empty">No units.</div>');
         break;
       }
@@ -510,7 +524,7 @@ function fmtEntry(g, e, i) {
     return `<div class="shot">${i + 1}. projectile ${e.projectileId} keeps flying ${p ? p.dir : ''} (from #${p?.ownerId})</div>`;
   }
   const u = g.getUnit(e.unitId);
-  const tag = e.order.quick ? 'goes first' : e.carried ? 'continuing' : 'new';
+  const tag = e.order.quick || e.order.charge ? 'goes first' : e.carried ? 'continuing' : 'new';
   return `<div class="${teamClass(u)}">${i + 1}. ${teamLabel(u)} #${e.unitId} ${fmtOrder(e.order)} <span class="meta">${tag}</span></div>`;
 }
 
@@ -523,7 +537,7 @@ function teamClass(u) {
 }
 
 function fmtOrder(o) {
-  if (o.type === 'move') return `${o.quick ? 'QUICK ' : ''}move(${o.x}, ${o.y})`;
+  if (o.type === 'move') return `${o.quick ? 'QUICK ' : ''}${o.charge ? 'CHARGE ' : ''}move(${o.x}, ${o.y})`;
   if (o.type === 'attack') return `attack(${o.dir})`;
   return o.type;
 }
@@ -556,6 +570,7 @@ function fmtEvent(e) {
     case 'arrived': return `<div class="arrived">#${e.unitId} arrived at ${e.at}</div>`;
     case 'orderStarted': return `<div class="meta">${e.step}. #${e.unitId} ${fmtOrder(e.order)}${e.carried ? ' (continued)' : ''}</div>`;
     case 'quickMove': return `<div class="quick">#${e.unitId} used its quick move (${e.remaining} left)</div>`;
+    case 'charge': return `<div class="charge">#${e.unitId} charges! (${e.remaining} left)</div>`;
     case 'shot': return `<div class="shot">#${e.unitId} fired projectile ${e.projectileId} ${e.dir} from ${e.from}</div>`;
     case 'projectileMoved': return `<div class="shot">projectile ${e.projectileId} ${e.path.map((p) => p.join(',')).join(' → ')}</div>`;
     case 'projectileExpired': return `<div class="meta">projectile ${e.projectileId} is gone (left the board or out of range)</div>`;

@@ -4,7 +4,7 @@
 // ends, the queue runs front to back and each entry happens in full before
 // the next. Its order is:
 //
-//   1. quick moves (the player's one-time "go first" moves)
+//   1. quick moves and charges (one-time "go first" moves), CPU's first
 //   2. entries carried over from last turn: projectiles still in flight and
 //      walks not yet finished, in the order they ran
 //   3. the CPU's new orders, which it stages first, at the start of the turn
@@ -23,6 +23,7 @@
 
 import { Teams } from './engine/game.js';
 import { planTurn } from './ai/cpu.js';
+import { goesToFront } from './engine/orders.js';
 
 export const MatchStatus = Object.freeze({
   PLAYING: 'playing',
@@ -62,12 +63,15 @@ export class Match {
     const plan = planTurn(g, Teams.CPU);
     const replaced = new Set(plan.map(([id]) => id));
     const keep = g.queue.filter((e) => !(isCpu(e) && replaced.has(e.unitId)));
-    const quick = keep.filter((e) => e.order?.quick);
+    const front = keep.filter((e) => goesToFront(e.order));
     const carried = keep.filter((e) => e.carried);
-    const playerNew = keep.filter((e) => !e.carried && !e.order?.quick);
+    const playerNew = keep.filter((e) => !e.carried && !goesToFront(e.order));
     g.state.queue = [];
     for (const [id, order] of plan) g.queueOrder(id, order);
-    g.state.queue = [...quick, ...carried, ...g.state.queue, ...playerNew];
+    // The CPU stages first, so its own charges lead the front section.
+    const cpuFront = g.state.queue.filter((e) => goesToFront(e.order));
+    const cpuRest = g.state.queue.filter((e) => !goesToFront(e.order));
+    g.state.queue = [...cpuFront, ...front, ...carried, ...cpuRest, ...playerNew];
     return plan;
   }
 

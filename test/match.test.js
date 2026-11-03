@@ -128,6 +128,7 @@ test('CPU steps off the line of a shot in flight when it still can', () => {
 
 test('match status: won, lost, draw', () => {
   const won = new Match(new Game({ width: 1, height: 5, units: [{ x: 0, y: 0, type: G }, { x: 0, y: 4, team: C }] }));
+  won.game.getUnit(2).charges = 0; // (with its charge it would rush in next to us and block the shot)
   won.startTurn(); // the CPU pikeman (out of reach) steps to (0,3)
   won.playerOrder(1, attack('down')); // then our shot reaches it
   won.endTurn();

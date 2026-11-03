@@ -28,6 +28,18 @@ export function quickMove(x, y) {
 }
 
 /**
+ * Create a charge: a move of up to the unit type's charge distance (3 for
+ * pikemen) that, like a quick move, goes to the FRONT of the order queue.
+ * Only units whose type has a "charge" can use it, a limited number of times.
+ */
+export function charge(x, y) {
+  return { type: OrderType.MOVE, x, y, charge: true };
+}
+
+/** Quick moves and charges go to the front of the queue. */
+export const goesToFront = (order) => !!(order?.quick || order?.charge);
+
+/**
  * Create an attack order in a hex direction ("up", "down-left", ...). What the
  * attack does (shoot, strike, ...) comes from the unit's type definition.
  */
@@ -45,10 +57,14 @@ export function validateOrder(order, grid, unitType = null) {
     return `${unitType.name} units cannot ${order.type}`;
   }
   if (order.quick !== undefined && order.type !== OrderType.MOVE) return 'only move orders can be quick';
+  if (order.charge !== undefined && order.type !== OrderType.MOVE) return 'only move orders can be charges';
   switch (order.type) {
     case OrderType.MOVE: {
       const { x, y } = order;
       if (order.quick !== undefined && order.quick !== true) return '"quick" must be true when present';
+      if (order.charge !== undefined && order.charge !== true) return '"charge" must be true when present';
+      if (order.quick && order.charge) return 'a move can\'t be both quick and a charge';
+      if (order.charge && unitType && !unitType.charge) return `${unitType.name} units can't charge`;
       if (!Number.isInteger(x) || !Number.isInteger(y)) return 'coordinates must be integers';
       if (x < 0 || y < 0 || x >= grid.width || y >= grid.height) return 'target out of bounds';
       return null;

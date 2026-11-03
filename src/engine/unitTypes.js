@@ -16,6 +16,10 @@
 //         "shape":  "circle",           circle | diamond | square | triangle
 //                                       (default circle)
 //         "attack": { ... }             omit for a unit that can't attack
+//         "charge": { "distance": 3, "uses": 1 }
+//                                       optional: a move of up to `distance`
+//                                       hexes that goes to the FRONT of the
+//                                       queue; `uses` per unit per match
 //       }
 //     }
 //   }
@@ -70,7 +74,7 @@ export function getUnitType(type) {
 export function defineUnitType(key, raw) {
   const fail = (msg) => { throw new Error(`Unit type "${key}": ${msg}`); };
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) fail('must be an object');
-  checkKeys(raw, ['name', 'speed', 'shape', 'attack'], fail);
+  checkKeys(raw, ['name', 'speed', 'shape', 'attack', 'charge'], fail);
 
   if (typeof raw.name !== 'string' || !raw.name) fail('"name" must be a non-empty string');
   checkSpeed(raw.speed, '"speed"', fail);
@@ -106,12 +110,23 @@ export function defineUnitType(key, raw) {
     Object.freeze(attack);
   }
 
+  let charge = null;
+  if (raw.charge !== undefined) {
+    const c = raw.charge;
+    if (!c || typeof c !== 'object' || Array.isArray(c)) fail('"charge" must be an object');
+    checkKeys(c, ['distance', 'uses'], fail, 'charge.');
+    checkSpeed(c.distance, '"charge.distance"', fail);
+    if (!Number.isInteger(c.uses) || c.uses < 1) fail('"charge.uses" must be a positive integer');
+    charge = Object.freeze({ distance: c.distance, uses: c.uses });
+  }
+
   return Object.freeze({
     key,
     name: raw.name,
     speed: raw.speed,
     shape,
     attack,
+    charge,
     orders: Object.freeze(attack ? [OrderType.MOVE, OrderType.ATTACK] : [OrderType.MOVE]),
   });
 }

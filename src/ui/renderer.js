@@ -26,6 +26,7 @@ const COLORS = {
   projectile: '#ffa94d',
   shotLine: 'rgba(255,169,77,0.8)',
   quick: '#6ff2ff',
+  charge: '#c49bff',
   label: '#0d1014',
 };
 
@@ -126,7 +127,7 @@ export class Renderer {
       if (!u) continue;
       const { order } = entry;
       if (order.type === 'move') {
-        const color = order.quick ? COLORS.quick
+        const color = order.quick ? COLORS.quick : order.charge ? COLORS.charge
           : entry.carried ? COLORS.activeOrder : u.team === 'cpu' ? TEAM_COLORS.cpu : COLORS.queuedOrder;
         this.drawOrderLine(u, order, color, !entry.carried);
       } else if (order.type === 'attack') {
@@ -175,6 +176,7 @@ export class Renderer {
       ctx.fillText(String(u.id), cx, cy + 1);
       if (u.speed > 1) this.drawSpeedBadge(cx + r * 0.75, cy - r * 0.75, u.speed);
       if (u.quickMoves > 0) this.drawQuickPip(cx - r * 0.8, cy + r * 0.8);
+      if (u.charges > 0) this.drawChargePip(cx - r * 0.8, cy - r * 0.8);
     }
 
     // Projectiles: a dot with a short tail pointing back the way it came.
@@ -317,6 +319,28 @@ export class Renderer {
       ctx.moveTo(cx - size * 0.45, y);
       ctx.bezierCurveTo(cx - size * 0.2, y - size * 0.15, cx, y + size * 0.15, cx + size * 0.2, y);
       ctx.bezierCurveTo(cx + size * 0.3, y - size * 0.08, cx + size * 0.4, y - size * 0.08, cx + size * 0.45, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** Small double-chevron pip: this unit still has a charge. */
+  drawChargePip(x, y) {
+    const { ctx, cell } = this;
+    const s = cell * 0.13;
+    ctx.save();
+    ctx.fillStyle = COLORS.label;
+    ctx.beginPath();
+    ctx.arc(x, y, s * 1.15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = COLORS.charge;
+    ctx.lineWidth = 1.8;
+    ctx.lineJoin = 'round';
+    for (const dx of [-0.35, 0.25]) {
+      ctx.beginPath();
+      ctx.moveTo(x + (dx - 0.25) * s, y - 0.55 * s);
+      ctx.lineTo(x + (dx + 0.25) * s, y);
+      ctx.lineTo(x + (dx - 0.25) * s, y + 0.55 * s);
       ctx.stroke();
     }
     ctx.restore();
