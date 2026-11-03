@@ -33,6 +33,10 @@
 //                 { "kind": "projectile", "speed": 4, "directions": "orthogonal",
 //                   "range": 6 }
 //
+//   Any attack may also set "blockedByAdjacentEnemy": true: the attack fails
+//   (nothing happens) if an enemy is on a neighbouring hex at the moment its
+//   queue entry runs. Attacks already made are unaffected.
+//
 //   "directions" is "all" (the 6 hex directions), "vertical" (up/down), or a
 //   list such as ["up", "down-left"]. Hex directions: up, up-right,
 //   down-right, down, down-left, up-left.
@@ -78,19 +82,23 @@ export function defineUnitType(key, raw) {
     const a = raw.attack;
     if (!a || typeof a !== 'object' || Array.isArray(a)) fail('"attack" must be an object');
     const directions = parseDirections(a.directions, fail);
+    if (a.blockedByAdjacentEnemy !== undefined && typeof a.blockedByAdjacentEnemy !== 'boolean') {
+      fail('"attack.blockedByAdjacentEnemy" must be true or false');
+    }
+    const blockedByAdjacentEnemy = a.blockedByAdjacentEnemy ?? false;
     switch (a.kind) {
       case AttackKind.MELEE:
-        checkKeys(a, ['kind', 'reach', 'directions'], fail, 'attack.');
+        checkKeys(a, ['kind', 'reach', 'directions', 'blockedByAdjacentEnemy'], fail, 'attack.');
         if (!Number.isInteger(a.reach) || a.reach < 1) fail('"attack.reach" must be a positive integer');
-        attack = { kind: a.kind, reach: a.reach, directions };
+        attack = { kind: a.kind, reach: a.reach, directions, blockedByAdjacentEnemy };
         break;
       case AttackKind.PROJECTILE:
-        checkKeys(a, ['kind', 'speed', 'range', 'directions'], fail, 'attack.');
+        checkKeys(a, ['kind', 'speed', 'range', 'directions', 'blockedByAdjacentEnemy'], fail, 'attack.');
         checkSpeed(a.speed, '"attack.speed"', fail);
         if (a.range !== undefined && (!Number.isInteger(a.range) || a.range < 1)) {
           fail('"attack.range" must be a positive integer (or left out for unlimited)');
         }
-        attack = { kind: a.kind, speed: a.speed, range: a.range ?? null, directions };
+        attack = { kind: a.kind, speed: a.speed, range: a.range ?? null, directions, blockedByAdjacentEnemy };
         break;
       default:
         fail(`"attack.kind" must be one of ${Object.values(AttackKind).join(', ')}`);

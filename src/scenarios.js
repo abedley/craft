@@ -144,6 +144,20 @@ export const scenarios = {
     return g;
   },
 
+  'Gunslinger: enemy next to it': () => {
+    // Left: an enemy is beside gunslinger 1 when its shot comes up: the shot fails.
+    // Right: enemy 6 steps beside gunslinger 4 only AFTER its shot: too late,
+    // the shot was already fired and hits.
+    const g = board([
+      { x: 1, y: 1, type: GS }, { x: 1, y: 5, team: C }, { x: 0, y: 1, team: C },
+      { x: 5, y: 1, type: GS }, { x: 5, y: 5, team: C }, { x: 6, y: 3, team: C },
+    ]);
+    g.queueOrder(1, attack('down'));
+    g.queueOrder(4, attack('down'));
+    g.queueOrder(6, move(6, 1));
+    return g;
+  },
+
   'Pikeman: strike': () => {
     // Unit 2 steps out before the strike (earlier in the queue): safe.
     // Unit 3 steps into the struck hexes after the strike: also safe.

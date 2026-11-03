@@ -27,6 +27,11 @@
 //               first unit it meets. Still flying? It carries over.
 //               melee kind: every unit in the `reach` hexes in a row next to
 //               the attacker is killed, right now (friendly fire included).
+//               If the type's attack is `blockedByAdjacentEnemy` (gunslingers)
+//               and an enemy is next to the attacker when the entry runs,
+//               the attack fails and nothing happens. A shot already fired
+//               (earlier in the queue, or still flying from a previous turn)
+//               is not affected.
 //   projectile  (carried over) flies another `speed` hexes the same way.
 //
 // Determinism: no randomness, clock or DOM; state is plain JSON.
@@ -285,6 +290,13 @@ export class Game {
 
       // Attack.
       const atk = getUnitType(unit.type).attack;
+      if (atk.blockedByAdjacentEnemy) {
+        const enemy = this.adjacentEnemy(unit);
+        if (enemy) {
+          events.push({ type: 'attackBlocked', step: stepNo, unitId: unit.id, reason: 'enemy adjacent', by: enemy.id });
+          return;
+        }
+      }
       if (atk.kind === AttackKind.PROJECTILE) {
         const p = {
           id: s.nextProjectileId++, ownerId: unit.id, x: unit.x, y: unit.y,
@@ -378,6 +390,15 @@ export class Game {
     }
     if (path.length > 1) events.push({ type: 'projectileMoved', step: stepNo, projectileId: p.id, path });
     return flying;
+  }
+
+  /** An enemy unit on one of the six hexes next to `unit` (first in direction order), or null. */
+  adjacentEnemy(unit) {
+    for (const [, x, y] of neighbors(unit.x, unit.y)) {
+      const other = this.unitAt(x, y);
+      if (other && other.team !== unit.team) return other;
+    }
+    return null;
   }
 
   removeProjectile(p) {

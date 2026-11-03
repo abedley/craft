@@ -288,7 +288,12 @@ export class DebugUI {
           } else if (sel && this.attackOrder(sel)) {
             const order = this.attackOrder(sel)(x, y);
             this.match.playerOrder(sel.id, order);
-            this.hint(`Queued: unit ${sel.id} ${fmtOrder(order)}.`);
+            const enemy = UnitTypes[sel.type].attack.blockedByAdjacentEnemy ? this.game.adjacentEnemy(sel) : null;
+            if (enemy) {
+              this.hint(`Queued: unit ${sel.id} ${fmtOrder(order)}, but enemy #${enemy.id} is next to it: the shot will fail unless that changes first.`, true);
+            } else {
+              this.hint(`Queued: unit ${sel.id} ${fmtOrder(order)}.`);
+            }
           } else if (unit && unit.team === Teams.CPU) {
             this.hint(`Unit ${unit.id} is a CPU unit.`, true);
             return;
@@ -429,13 +434,15 @@ export class DebugUI {
     const blocked = new Map();
     const projectiles = [];
     const killed = new Set();
+    const attackBlocked = new Set();
     for (const e of events) {
       if (e.type === 'moved') moved.set(e.unitId, e.path);
       if (e.type === 'blocked') blocked.set(e.unitId, e.reason);
       if (e.type === 'projectileMoved') projectiles.push(e.path);
       if (e.type === 'killed') killed.add(e.unitId);
+      if (e.type === 'attackBlocked') attackBlocked.add(e.unitId);
     }
-    return { moved, blocked, projectiles, killed };
+    return { moved, blocked, projectiles, killed, attackBlocked };
   }
 
   render() {
@@ -552,6 +559,7 @@ function fmtEvent(e) {
     case 'shot': return `<div class="shot">#${e.unitId} fired projectile ${e.projectileId} ${e.dir} from ${e.from}</div>`;
     case 'projectileMoved': return `<div class="shot">projectile ${e.projectileId} ${e.path.map((p) => p.join(',')).join(' → ')}</div>`;
     case 'projectileExpired': return `<div class="meta">projectile ${e.projectileId} is gone (left the board or out of range)</div>`;
+    case 'attackBlocked': return `<div class="blocked">#${e.unitId} can't shoot: enemy #${e.by} is next to it</div>`;
     case 'strike': return `<div class="shot">#${e.unitId} struck ${e.dir} at ${e.cells.map((c) => c.join(',')).join(' and ') || '(off the board)'}</div>`;
     case 'killed': {
       const how = e.hits.map((h) => (h.cause === 'melee' ? `strike of #${h.attackerId}` : `projectile ${h.sourceId} (#${h.attackerId})`)).join(' + ');

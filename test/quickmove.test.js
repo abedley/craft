@@ -118,7 +118,9 @@ test('a quick move steps out of a CPU shot that would land this turn; a normal m
   // d hexes below (within the shot's 4-hex flight). The CPU's order is ahead
   // of the player's normal move in the queue, so the shot lands first; a
   // quick move is ahead of the CPU, so the unit is gone before it fires.
-  for (let d = 1; d <= 4; d++) {
+  // (At range 1 the target is next to the gunslinger, which can't shoot at
+  // all; see gunslinger.test.js.)
+  for (let d = 2; d <= 4; d++) {
     const setup = () => {
       const g = new Game({ width: 3, height: 7, units: [{ x: 1, y: 0, type: 'gunslinger', team: C }, { x: 1, y: d }] });
       g.queueOrder(1, attack('down'));

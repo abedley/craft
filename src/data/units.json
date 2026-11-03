@@ -18,7 +18,8 @@
       "attack": {
         "kind": "projectile",
         "speed": 4,
-        "directions": "all"
+        "directions": "all",
+        "blockedByAdjacentEnemy": true
       }
     }
   }

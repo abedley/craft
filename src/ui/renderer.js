@@ -170,6 +170,7 @@ export class Renderer {
         ctx.setLineDash([]);
       }
       if (preview?.killed.has(u.id)) this.drawCross(cx, cy, r * 1.1, COLORS.blocked);
+      if (preview?.attackBlocked?.has(u.id)) this.drawNoEntry(cx + r * 0.8, cy + r * 0.8);
       ctx.fillStyle = COLORS.label;
       ctx.fillText(String(u.id), cx, cy + 1);
       if (u.speed > 1) this.drawSpeedBadge(cx + r * 0.75, cy - r * 0.75, u.speed);
@@ -271,6 +272,25 @@ export class Renderer {
     ctx.lineTo(bx + dx * this.cell * 0.5, by + dy * this.cell * 0.5);
     ctx.stroke();
     ctx.setLineDash([]);
+  }
+
+  /** Red "no" sign: this unit's queued attack will fail. */
+  drawNoEntry(x, y) {
+    const { ctx, cell } = this;
+    const s = cell * 0.14;
+    ctx.save();
+    ctx.fillStyle = COLORS.label;
+    ctx.beginPath();
+    ctx.arc(x, y, s * 1.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = COLORS.blocked;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(x, y, s, 0, Math.PI * 2);
+    ctx.moveTo(x - s * 0.7, y - s * 0.7);
+    ctx.lineTo(x + s * 0.7, y + s * 0.7);
+    ctx.stroke();
+    ctx.restore();
   }
 
   drawCross(cx, cy, m, color) {

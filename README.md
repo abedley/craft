@@ -204,6 +204,7 @@ error messages that name the unit and field.
 | `attack.reach` | melee: how many hexes in a row it strikes |
 | `attack.speed` | projectile: hexes flown per queue entry, 1–6 |
 | `attack.range` | projectile: max cells travelled; leave it out for unlimited |
+| `attack.blockedByAdjacentEnemy` | optional, `true`: the attack fails if an enemy is next to the unit when its queue entry runs |
 | `default` | type used when a unit doesn't name one |
 | `renamed` | optional: old type keys mapped to current ones, so old saves still load |
 
@@ -240,6 +241,15 @@ other. A unit that walks into a hex where a shot is sitting is hit.
 
 So two gunslingers facing each other within 4 hexes: the one first in the queue wins, and the other
 never fires.
+
+**Gunslingers can't shoot with an enemy next to them.** If an enemy unit is on any of the 6 hexes
+around the gunslinger when its shot comes up in the queue, the shot fails and nothing is fired
+(`attackBlocked` event; a teammate next to it doesn't matter). It's checked at that moment only:
+if the gunslinger has already shot (earlier in the queue, or a shot still flying from a previous
+turn), an enemy arriving next to it afterwards changes nothing. Likewise an enemy that moves away or
+dies earlier in the queue no longer blocks it. The rule is the unit-JSON flag
+`"blockedByAdjacentEnemy": true` on the gunslinger's attack, so other unit types can use it too. The
+CPU won't plan a shot that would be blocked, and won't pick a firing hex next to an enemy.
 
 ### Determinism
 

@@ -16,13 +16,15 @@
 //   2. Attack, by attack kind:
 //      - projectile: fire if the first unit along an allowed direction, within
 //        range, is an enemy (never when a teammate is first in line); nearest
-//        enemy first.
+//        enemy first. Not when an enemy is next to it, if its attack is
+//        blockedByAdjacentEnemy: the shot would fail.
 //      - melee: strike in the allowed direction that catches the most enemies
 //        within reach, as the board stands now, and never when a teammate
 //        would be in the strike: either standing there or, for a teammate
 //        already planned this turn, stepping in.
 //   3. Move: projectile units walk toward the nearest free cell with a clear
-//      shot (allowed direction, in range, nothing in between) at some enemy;
+//      shot (allowed direction, in range, nothing in between, and not next to
+//      an enemy if that would block the shot) at some enemy;
 //      everyone else walks toward the nearest enemy. "Nearest" is walking
 //      distance around terrain units can't cross (e.g. water); firing cells
 //      must be walkable and reachable, but shots fly over any terrain.
@@ -32,7 +34,7 @@
 import { move, attack } from '../engine/orders.js';
 import { nextStep, strikeCells, distancesTo } from '../engine/game.js';
 import { getUnitType, AttackKind } from '../engine/unitTypes.js';
-import { step, distance, OPPOSITE } from '../engine/hex.js';
+import { step, distance, OPPOSITE, neighbors } from '../engine/hex.js';
 
 // Fixed tie-break order for directions.
 const DIR_PRIORITY = ['up', 'down', 'up-right', 'down-right', 'down-left', 'up-left'];
@@ -99,6 +101,8 @@ export function firstInLine(game, x, y, dir, maxDist = Infinity) {
 }
 
 function bestShot(game, u, atk) {
+  // The shot would fail with an enemy next to us (see unitTypes.js).
+  if (atk.blockedByAdjacentEnemy && game.adjacentEnemy(u)) return null;
   let best = null;
   for (const dir of inPriorityOrder(atk.directions)) {
     const hit = firstInLine(game, u.x, u.y, dir, atk.range ?? Infinity);
@@ -153,6 +157,11 @@ function firingPosition(game, u, atk, enemies, walk) {
         const occ = game.unitAt(x, y);
         if (occ && occ.id !== u.id) break;
         if (occ) continue; // u's own cell: if a shot existed bestShot would have fired
+        // Shooting from next to an enemy would fail.
+        if (atk.blockedByAdjacentEnemy && neighbors(x, y).some(([, nx, ny]) => {
+          const n = game.unitAt(nx, ny);
+          return n && n.team !== u.team;
+        })) continue;
         const d = walk.get(`${x},${y}`); // undefined: can't stand there or can't get there
         if (d === undefined) continue;
         const cand = { x, y, d, de: hexDist(u, e) };
