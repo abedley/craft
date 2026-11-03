@@ -125,3 +125,70 @@ test('in a match: walking a pikeman up to a CPU gunslinger with a quick move sto
   assert.ok(events.some((e) => e.type === 'attackBlocked' && e.unitId === 3));
   assert.ok(g.getUnit(1), 'our gunslinger survived');
 });
+
+// ---- One shot in flight at a time ----------------------------------------
+
+test('a gunslinger can\'t shoot while its last shot is still flying', () => {
+  const g = new Game({ width: 1, height: 12, units: [{ x: 0, y: 0, type: G }] });
+  g.queueOrder(1, attack('down'));
+  g.tick(); // shot at (0,4), still flying
+  assert.equal(g.projectilesOf(1).length, 1);
+  assert.equal(UnitTypes.gunslinger.attack.maxInFlight, 1);
+  // Its carried-over shot flies first (to (0,8)), and is still in flight
+  // when the new shot comes up, so the new one fails.
+  g.queueOrder(1, attack('down'));
+  const events = g.tick();
+  const b = events.find((e) => e.type === 'attackBlocked');
+  assert.deepEqual([b.unitId, b.reason, b.by], [1, 'projectile in flight', 1]);
+  assert.equal(g.projectiles.length, 1);
+});
+
+test('once that shot has hit or left the board it can shoot again, even earlier in the same queue', () => {
+  // The carried-over shot leaves the board on its flight at the front of
+  // the queue; the new shot later in the same queue is then allowed.
+  const g = new Game({ width: 1, height: 7, units: [{ x: 0, y: 0, type: G }] });
+  g.queueOrder(1, attack('down'));
+  g.tick(); // shot at (0,4)
+  g.queueOrder(1, attack('down'));
+  const events = g.tick();
+  assert.ok(events.some((e) => e.type === 'projectileExpired' && e.projectileId === 1));
+  assert.ok(events.some((e) => e.type === 'shot' && e.projectileId === 2));
+  assert.ok(!events.some((e) => e.type === 'attackBlocked'));
+});
+
+test('a shot that hits frees the gunslinger to shoot again next turn', () => {
+  const g = new Game({ width: 1, height: 8, units: [{ x: 0, y: 0, type: G }, { x: 0, y: 3, team: C }, { x: 0, y: 4, team: C }] });
+  g.queueOrder(1, attack('down'));
+  assert.deepEqual(kills(g.tick()), [2]);
+  g.queueOrder(1, attack('down'));
+  assert.deepEqual(kills(g.tick()), [3]);
+});
+
+test('other units\' shots don\'t count, and pikemen are unaffected', () => {
+  const g = new Game({ width: 3, height: 12, units: [{ x: 0, y: 0, type: G }, { x: 2, y: 0, type: G }] });
+  g.queueOrder(1, attack('down'));
+  g.tick();
+  g.queueOrder(2, attack('down'));
+  assert.ok(g.tick().some((e) => e.type === 'shot' && e.unitId === 2));
+  assert.ok(!UnitTypes.pikeman.attack.maxInFlight, 'melee attacks have no in-flight limit');
+});
+
+test('maxInFlight is validated', () => {
+  const bad = (n) => () => defineUnitType('x', { name: 'X', speed: 1, attack: { kind: 'projectile', speed: 2, directions: 'all', maxInFlight: n } });
+  assert.throws(bad(0), /"attack.maxInFlight"/);
+  assert.throws(bad(1.5), /"attack.maxInFlight"/);
+});
+
+test('the CPU doesn\'t plan a shot while its last one will still be flying', () => {
+  const g = new Game({ width: 1, height: 16, units: [{ x: 0, y: 0, type: G, team: C }, { x: 0, y: 15 }] });
+  g.queueOrder(1, attack('down'));
+  g.tick(); // its shot at (0,4); after its next flight it'll be at (0,8), still flying
+  const plan = planTurn(g, C);
+  assert.ok(!plan.some(([, o]) => o.type === 'attack'));
+
+  // A shot that will hit on its next flight doesn't hold it back.
+  const h = new Game({ width: 1, height: 10, units: [{ x: 0, y: 0, type: G, team: C }, { x: 0, y: 7 }] });
+  h.queueOrder(1, attack('down'));
+  h.tick(); // shot at (0,4); next flight reaches (0,7) and hits
+  assert.deepEqual(planTurn(h, C), [[1, attack('down')]]);
+});

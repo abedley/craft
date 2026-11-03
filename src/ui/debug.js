@@ -292,9 +292,14 @@ export class DebugUI {
           } else if (sel && this.attackOrder(sel)) {
             const order = this.attackOrder(sel)(x, y);
             this.match.playerOrder(sel.id, order);
-            const enemy = UnitTypes[sel.type].attack.blockedByAdjacentEnemy ? this.game.adjacentEnemy(sel) : null;
+            const atk = UnitTypes[sel.type].attack;
+            const enemy = atk.blockedByAdjacentEnemy ? this.game.adjacentEnemy(sel) : null;
+            const inFlight = atk.maxInFlight !== null && atk.maxInFlight !== undefined
+              && this.game.projectilesOf(sel.id).length >= atk.maxInFlight;
             if (enemy) {
               this.hint(`Queued: unit ${sel.id} ${fmtOrder(order)}, but enemy #${enemy.id} is next to it: the shot will fail unless that changes first.`, true);
+            } else if (inFlight) {
+              this.hint(`Queued: unit ${sel.id} ${fmtOrder(order)}, but its last shot is still flying: this one fails unless that shot lands or leaves the board first.`, true);
             } else {
               this.hint(`Queued: unit ${sel.id} ${fmtOrder(order)}.`);
             }
@@ -325,7 +330,12 @@ export class DebugUI {
             return;
           } else if (sel && def.teleport && sel.teleports !== 0) {
             this.match.playerOrder(sel.id, teleport(x, y));
-            this.hint(`Queued: unit ${sel.id} TELEPORT to ${x},${y}${def.teleport.leavesMine ? ', leaving a mine' : ''}.`);
+            const tp = def.teleport;
+            if (tp.leavesMine && tp.maxMines !== null && this.game.minesOf(sel.id).length >= tp.maxMines) {
+              this.hint(`Queued: unit ${sel.id} TELEPORT to ${x},${y}, but it already has ${tp.maxMines} mines down: it can't teleport unless one goes off first.`, true);
+            } else {
+              this.hint(`Queued: unit ${sel.id} TELEPORT to ${x},${y}${tp.leavesMine ? ', leaving a mine' : ''}.`);
+            }
           } else if (sel && def.charge && sel.charges > 0) {
             const dir = nearestDirection(this.renderer, sel, x, y, def.attack?.directions ?? ALL_DIRECTIONS);
             this.match.playerOrder(sel.id, charge(dir));
@@ -555,7 +565,7 @@ export class DebugUI {
         const el = $('#tab-units');
         const projLines = g.projectiles.map((p) => `<div class="shot">projectile ${p.id} @ ${p.x},${p.y} → ${p.dir} (from #${p.ownerId})</div>`).join('');
         el.innerHTML = projLines + (g.units.length
-          ? g.units.map((u) => `<div class="${teamClass(u)}">${teamLabel(u)} #${u.id} ${UnitTypes[u.type].name} @ ${u.x},${u.y} spd ${u.speed}${u.quickMoves > 0 ? ' ⚡' : ''}${u.charges > 0 ? ' »' : ''}${u.teleports !== 0 && UnitTypes[u.type].teleport ? ' ⇢' : ''} ${g.orderFor(u.id) ? fmtOrder(g.orderFor(u.id)) : '<span class="meta">idle</span>'}</div>`).join('')
+          ? g.units.map((u) => `<div class="${teamClass(u)}">${teamLabel(u)} #${u.id} ${UnitTypes[u.type].name} @ ${u.x},${u.y} spd ${u.speed}${u.quickMoves > 0 ? ' ⚡' : ''}${u.charges > 0 ? ' »' : ''}${u.teleports !== 0 && UnitTypes[u.type].teleport ? ` ⇢ mines ${g.minesOf(u.id).length}${UnitTypes[u.type].teleport.maxMines ? `/${UnitTypes[u.type].teleport.maxMines}` : ''}` : ''} ${g.orderFor(u.id) ? fmtOrder(g.orderFor(u.id)) : '<span class="meta">idle</span>'}</div>`).join('')
           : '<div class="empty">No units.</div>');
         break;
       }
@@ -638,7 +648,7 @@ function fmtEvent(e) {
     case 'shot': return `<div class="shot">#${e.unitId} fired projectile ${e.projectileId} ${e.dir} from ${e.from}</div>`;
     case 'projectileMoved': return `<div class="shot">projectile ${e.projectileId} ${e.path.map((p) => p.join(',')).join(' → ')}</div>`;
     case 'projectileExpired': return `<div class="meta">projectile ${e.projectileId} is gone (left the board or out of range)</div>`;
-    case 'attackBlocked': return `<div class="blocked">#${e.unitId} can't shoot: enemy #${e.by} is next to it</div>`;
+    case 'attackBlocked': return `<div class="blocked">#${e.unitId} can't shoot: ${e.reason === 'projectile in flight' ? `its shot (projectile ${e.by}) is still flying` : `enemy #${e.by} is next to it`}</div>`;
     case 'strike': return `<div class="shot">#${e.unitId} struck ${e.dir} at ${e.cells.map((c) => c.join(',')).join(' and ') || '(off the board)'}</div>`;
     case 'killed': {
       const how = e.hits.map((h) => (h.cause === 'mine' ? `mine ${h.sourceId} (#${h.attackerId})` : h.cause === 'melee' ? `strike of #${h.attackerId}` : `projectile ${h.sourceId} (#${h.attackerId})`)).join(' + ');

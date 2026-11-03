@@ -15,7 +15,7 @@ const col = (height, units) => new Game({ width: 1, height, units: units.map(([y
 test('the stalker comes from the unit JSON: no attack, a 3-hex teleport that leaves a mine', () => {
   const def = UnitTypes.stalker;
   assert.equal(def.attack, null);
-  assert.deepEqual(def.teleport, { distance: 3, leavesMine: true, uses: null });
+  assert.deepEqual(def.teleport, { distance: 3, leavesMine: true, maxMines: 2, uses: null });
   const g = new Game({ width: 5, height: 5, units: [{ x: 0, y: 0, type: S }, { x: 4, y: 4 }] });
   assert.equal(g.getUnit(1).teleports, null, 'unlimited');
   assert.equal(g.getUnit(2).teleports, 0);
@@ -122,7 +122,9 @@ test('teleport definitions are validated; uses can be limited', () => {
   assert.throws(bad({ distance: 3, uses: 0 }), /"teleport.uses"/);
   assert.throws(bad({ distance: 3, range: 2 }), /unknown field "teleport.range"/);
   const limited = defineUnitType('x', { name: 'X', speed: 1, teleport: { distance: 2, uses: 1 } });
-  assert.deepEqual(limited.teleport, { distance: 2, leavesMine: false, uses: 1 });
+  assert.deepEqual(limited.teleport, { distance: 2, leavesMine: false, maxMines: null, uses: 1 });
+  assert.throws(bad({ distance: 3, leavesMine: true, maxMines: 0 }), /"teleport.maxMines"/);
+  assert.throws(bad({ distance: 3, maxMines: 2 }), /only makes sense with "leavesMine"/);
 });
 
 test('mines survive a snapshot round-trip', () => {
@@ -175,4 +177,58 @@ test('in a match: an enemy chasing the CPU stalker walks into its mine', () => {
   m.playerOrder(1, move(0, 3)); // chase it, onto the mine
   const events = m.endTurn();
   assert.ok(events.some((e) => e.type === 'mineExploded' && e.unitId === 1));
+});
+
+// ---- At most 2 mines; no mine, no teleport --------------------------------
+
+test('a stalker can have at most 2 mines; with 2 down it can\'t teleport (it couldn\'t lay a mine)', () => {
+  const g = col(10, [[0, { type: S }]]);
+  g.queueOrder(1, teleport(0, 3));
+  g.tick(); // mine 1 at (0,0)
+  g.queueOrder(1, teleport(0, 6));
+  g.tick(); // mine 2 at (0,3)
+  assert.equal(g.minesOf(1).length, 2);
+  g.queueOrder(1, teleport(0, 9));
+  const events = g.tick();
+  assert.deepEqual(pos(g, 1), [0, 6], 'stayed put');
+  assert.ok(events.some((e) => e.type === 'blocked' && e.unitId === 1 && e.reason === 'mine limit'));
+  assert.equal(g.mines.length, 2, 'no third mine');
+  // It can still walk.
+  g.queueOrder(1, move(0, 7));
+  g.tick();
+  assert.deepEqual(pos(g, 1), [0, 7]);
+});
+
+test('once one of its mines goes off, it can teleport again; even if that happens earlier in the same queue', () => {
+  const g = new Game({ width: 1, height: 10, units: [{ x: 0, y: 0, type: S }, { x: 0, y: 9, team: C }] });
+  g.queueOrder(1, teleport(0, 3));
+  g.tick(); // mine at (0,0)
+  g.queueOrder(1, teleport(0, 6));
+  g.tick(); // mine at (0,3); stalker at (0,6)
+  g.getUnit(2).y = 4; // (put the enemy next to the mine at (0,3))
+  g.queueOrder(2, move(0, 3)); // sets off mine 2, earlier in the queue...
+  g.queueOrder(1, teleport(0, 8)); // ...so this teleport is allowed
+  const events = g.tick();
+  assert.ok(events.some((e) => e.type === 'mineExploded' && e.unitId === 2));
+  assert.deepEqual(pos(g, 1), [0, 8]);
+  assert.equal(g.minesOf(1).length, 2);
+});
+
+test('mine limits are per stalker', () => {
+  const g = col(12, [[0, { type: S }], [11, { type: S }]]);
+  for (const [a, b] of [[3, 8], [6, 5]]) {
+    g.queueOrder(1, teleport(0, a));
+    g.queueOrder(2, teleport(0, b));
+    g.tick();
+  }
+  assert.deepEqual([g.minesOf(1).length, g.minesOf(2).length], [2, 2]);
+});
+
+test('the CPU stalker at its mine limit doesn\'t try to teleport; it walks away instead', () => {
+  const g = new Game({ width: 8, height: 8, units: [{ x: 3, y: 2, type: S, team: C }, { x: 3, y: 4 }] });
+  g.state.mines.push({ id: 1, x: 0, y: 0, ownerId: 1, team: C }, { id: 2, x: 7, y: 7, ownerId: 1, team: C });
+  const plan = planTurn(g, C);
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0][1].type, 'move');
+  assert.ok(distance(plan[0][1].x, plan[0][1].y, 3, 4) > 2, 'away from the enemy');
 });

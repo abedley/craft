@@ -27,7 +27,10 @@
 //      charge in the direction that hits the most.
 //   Stalkers (units with a teleport): if an enemy is within 2, teleport to
 //      the free hex in range furthest from the enemy (leaving a mine where it
-//      stood); otherwise close in until about the teleport distance away.
+//      stood), or, at its mine limit (it can't teleport then), walk away;
+//      otherwise close in until about the teleport distance away.
+//   Shooters don't plan a shot while one of theirs will still be in flight
+//   when their turn comes (maxInFlight).
 //   4. Move: projectile units head for the nearest free cell with a clear
 //      shot (allowed direction, in range, nothing in between, and not next to
 //      an enemy if that would block the shot) at some enemy; everyone else
@@ -95,8 +98,19 @@ export function planTurn(game, team) {
     // a mine in its path), otherwise hover about the teleport distance away.
     if (def.teleport && u.teleports !== 0) {
       const d = target ? walk.get(`${target.x},${target.y}`) : Infinity;
+      const tp = def.teleport;
+      const canTeleport = !(tp.leavesMine && tp.maxMines !== null && game.minesOf(u.id).length >= tp.maxMines);
+      if (d <= 2 && !canTeleport) {
+        // At its mine limit: it can't teleport, so walk away instead.
+        const away = walkAway(game, u, enemies);
+        if (away) {
+          plan.push([u.id, move(away[0], away[1])]);
+          planMove(u, move(away[0], away[1]));
+        }
+        continue;
+      }
       if (d <= 2) {
-        const spot = escapeHex(game, u, def.teleport.distance, enemies);
+        const spot = escapeHex(game, u, tp.distance, enemies);
         if (spot) {
           plan.push([u.id, teleport(spot[0], spot[1])]);
           teamCells.add(`${spot[0]},${spot[1]}`);
@@ -146,6 +160,13 @@ export function firstInLine(game, x, y, dir, maxDist = Infinity) {
 function bestShot(game, u, atk) {
   // The shot would fail with an enemy next to us (see unitTypes.js).
   if (atk.blockedByAdjacentEnemy && game.adjacentEnemy(u)) return null;
+  // ...or with too many of our shots still in flight when our entry comes up.
+  // Our carried-over shots fly first (ahead of the CPU's new orders); count
+  // the ones that will still be flying after that.
+  if (atk.maxInFlight !== null) {
+    const stillFlying = game.projectilesOf(u.id).filter((p) => survivesNextFlight(game, p)).length;
+    if (stillFlying >= atk.maxInFlight) return null;
+  }
   let best = null;
   for (const dir of inPriorityOrder(atk.directions)) {
     const hit = firstInLine(game, u.x, u.y, dir, atk.range ?? Infinity);
@@ -207,6 +228,23 @@ function safeStep(game, u, tx, ty) {
 }
 
 /**
+ * A hex within one turn's walk (mine-free route, not occupied) that's
+ * further from the nearest enemy than here, the furthest such; null if none.
+ */
+function walkAway(game, u, enemies) {
+  const nearestEnemy = (x, y) => Math.min(...enemies.map((e) => distance(x, y, e.x, e.y)));
+  let best = null;
+  for (const [k, d] of distancesTo(game, u.x, u.y)) {
+    if (d === 0 || d > u.speed) continue;
+    const [x, y] = k.split(',').map(Number);
+    if (game.unitAt(x, y) || routeTo(game, u, x, y).some(([cx, cy]) => game.mineAt(cx, cy))) continue;
+    const away = nearestEnemy(x, y);
+    if (!best || away > best.away || (away === best.away && (y < best.y || (y === best.y && x < best.x)))) best = { x, y, away };
+  }
+  return best && best.away > nearestEnemy(u.x, u.y) ? [best.x, best.y] : null;
+}
+
+/**
  * Where to teleport to get away from enemies: the free, walkable hex within
  * `range` (no mine or projectile on it) that is furthest from the nearest
  * enemy. Ties: lower y, then lower x. Null if nowhere is further than here.
@@ -240,6 +278,17 @@ function bestCharge(game, u, atk, teamCells) {
     if (enemies > 0 && (!best || enemies > best.enemies)) best = { dir, enemies };
   }
   return best?.dir ?? null;
+}
+
+/** Will this projectile still be in flight after its next flight (board as it stands)? */
+function survivesNextFlight(game, p) {
+  let [x, y] = [p.x, p.y];
+  for (let k = 1; k <= p.speed; k++) {
+    [x, y] = step(x, y, p.dir);
+    if (!game.inBounds(x, y) || (p.range !== null && p.traveled + k > p.range)) return false;
+    if (game.unitAt(x, y)) return false;
+  }
+  return true;
 }
 
 function nearest(u, others, walk) {

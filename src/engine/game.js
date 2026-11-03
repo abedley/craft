@@ -34,6 +34,9 @@
 //               first unit it meets. Still flying? It carries over.
 //               melee kind: every unit in the `reach` hexes in a row next to
 //               the attacker is killed, right now (friendly fire included).
+//               A gunslinger can't fire while one of its shots is still in
+//               flight (`maxInFlight`); it can again once that shot has hit
+//               or left the board, even earlier in the same queue.
 //               If the type's attack is `blockedByAdjacentEnemy` (gunslingers)
 //               and an enemy is next to the attacker when the entry runs,
 //               the attack fails and nothing happens. A shot already fired
@@ -49,7 +52,8 @@
 //   teleport    The unit jumps straight to its target hex (up to its type's
 //               teleport distance away; what's in between doesn't matter). If
 //               that hex has been taken earlier in the queue, nothing happens.
-//               A stalker leaves a MINE on the hex it left.
+//               A stalker leaves a MINE on the hex it left. It can't teleport
+//               while it already has its maximum of mines (2) on the board.
 //   projectile  (carried over) flies another `speed` hexes the same way.
 //
 // Mines: any unit (either team, the stalker too) that moves onto a mined hex
@@ -149,6 +153,16 @@ export class Game {
   }
 
   get mines() { return this.state.mines; }
+
+  /** Mines on the board laid by this unit. */
+  minesOf(unitId) {
+    return this.state.mines.filter((m) => m.ownerId === unitId);
+  }
+
+  /** Projectiles in flight fired by this unit. */
+  projectilesOf(unitId) {
+    return this.state.projectiles.filter((p) => p.ownerId === unitId);
+  }
 
   mineAt(x, y) {
     return this.state.mines.find((m) => m.x === x && m.y === y) ?? null;
@@ -342,6 +356,12 @@ export class Game {
       }
 
       if (order.type === OrderType.TELEPORT) {
+        const tpDef = getUnitType(unit.type).teleport;
+        if (tpDef.leavesMine && tpDef.maxMines !== null && this.minesOf(unit.id).length >= tpDef.maxMines) {
+          // It couldn't lay a mine, so it can't teleport.
+          events.push({ type: 'blocked', step: stepNo, unitId: unit.id, at: [unit.x, unit.y], reason: 'mine limit', by: null });
+          return;
+        }
         const occupant = this.unitAt(order.x, order.y);
         if (occupant) {
           // The landing hex was taken earlier in the queue: nothing happens.
@@ -406,6 +426,13 @@ export class Game {
       const enemy = this.adjacentEnemy(unit);
       if (enemy) {
         events.push({ type: 'attackBlocked', step: stepNo, unitId: unit.id, reason: 'enemy adjacent', by: enemy.id });
+        return null;
+      }
+    }
+    if (atk.kind === AttackKind.PROJECTILE && atk.maxInFlight !== null) {
+      const flying = this.projectilesOf(unit.id);
+      if (flying.length >= atk.maxInFlight) {
+        events.push({ type: 'attackBlocked', step: stepNo, unitId: unit.id, reason: 'projectile in flight', by: flying[0].id });
         return null;
       }
     }

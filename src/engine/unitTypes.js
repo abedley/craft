@@ -16,11 +16,13 @@
 //         "shape":  "circle",           circle | diamond | square | triangle
 //                                       (default circle)
 //         "attack": { ... }             omit for a unit that can't attack
-//         "teleport": { "distance": 3, "leavesMine": true, "uses": 2 }
+//         "teleport": { "distance": 3, "leavesMine": true, "maxMines": 2, "uses": 2 }
 //                                       optional: jump to any free walkable hex
 //                                       up to `distance` away (ignores what's in
 //                                       between); `leavesMine` drops a mine on
-//                                       the hex it left; `uses` per match (leave
+//                                       the hex it left; `maxMines`: it can't
+//                                       teleport while it has that many mines
+//                                       on the board; `uses` per match (leave
 //                                       it out for unlimited). A normal-speed
 //                                       order: it joins the end of the queue.
 //         "charge": { "distance": 3, "uses": 1 }
@@ -43,6 +45,10 @@
 //                 is optional; leave it out for unlimited range.
 //                 { "kind": "projectile", "speed": 4, "directions": "orthogonal",
 //                   "range": 6 }
+//
+//   A projectile attack may set "maxInFlight": 1: the unit can't fire while
+//   that many of its projectiles are still in flight (checked when the
+//   attack's queue entry runs).
 //
 //   Any attack may also set "blockedByAdjacentEnemy": true: the attack fails
 //   (nothing happens) if an enemy is on a neighbouring hex at the moment its
@@ -104,12 +110,15 @@ export function defineUnitType(key, raw) {
         attack = { kind: a.kind, reach: a.reach, directions, blockedByAdjacentEnemy };
         break;
       case AttackKind.PROJECTILE:
-        checkKeys(a, ['kind', 'speed', 'range', 'directions', 'blockedByAdjacentEnemy'], fail, 'attack.');
+        checkKeys(a, ['kind', 'speed', 'range', 'directions', 'blockedByAdjacentEnemy', 'maxInFlight'], fail, 'attack.');
+        if (a.maxInFlight !== undefined && (!Number.isInteger(a.maxInFlight) || a.maxInFlight < 1)) {
+          fail('"attack.maxInFlight" must be a positive integer (or left out for no limit)');
+        }
         checkSpeed(a.speed, '"attack.speed"', fail);
         if (a.range !== undefined && (!Number.isInteger(a.range) || a.range < 1)) {
           fail('"attack.range" must be a positive integer (or left out for unlimited)');
         }
-        attack = { kind: a.kind, speed: a.speed, range: a.range ?? null, directions, blockedByAdjacentEnemy };
+        attack = { kind: a.kind, speed: a.speed, range: a.range ?? null, directions, blockedByAdjacentEnemy, maxInFlight: a.maxInFlight ?? null };
         break;
       default:
         fail(`"attack.kind" must be one of ${Object.values(AttackKind).join(', ')}`);
@@ -131,11 +140,15 @@ export function defineUnitType(key, raw) {
   if (raw.teleport !== undefined) {
     const t = raw.teleport;
     if (!t || typeof t !== 'object' || Array.isArray(t)) fail('"teleport" must be an object');
-    checkKeys(t, ['distance', 'leavesMine', 'uses'], fail, 'teleport.');
+    checkKeys(t, ['distance', 'leavesMine', 'maxMines', 'uses'], fail, 'teleport.');
+    if (t.maxMines !== undefined && (!Number.isInteger(t.maxMines) || t.maxMines < 1)) {
+      fail('"teleport.maxMines" must be a positive integer (or left out for no limit)');
+    }
+    if (t.maxMines !== undefined && !t.leavesMine) fail('"teleport.maxMines" only makes sense with "leavesMine": true');
     checkSpeed(t.distance, '"teleport.distance"', fail);
     if (t.leavesMine !== undefined && typeof t.leavesMine !== 'boolean') fail('"teleport.leavesMine" must be true or false');
     if (t.uses !== undefined && (!Number.isInteger(t.uses) || t.uses < 1)) fail('"teleport.uses" must be a positive integer (or left out for unlimited)');
-    teleport = Object.freeze({ distance: t.distance, leavesMine: t.leavesMine ?? false, uses: t.uses ?? null });
+    teleport = Object.freeze({ distance: t.distance, leavesMine: t.leavesMine ?? false, maxMines: t.maxMines ?? null, uses: t.uses ?? null });
   }
 
   return Object.freeze({

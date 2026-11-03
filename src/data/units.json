@@ -20,14 +20,15 @@
         "kind": "projectile",
         "speed": 4,
         "directions": "all",
-        "blockedByAdjacentEnemy": true
+        "blockedByAdjacentEnemy": true,
+        "maxInFlight": 1
       }
     },
     "stalker": {
       "name": "Stalker",
       "speed": 1,
       "shape": "triangle",
-      "teleport": { "distance": 3, "leavesMine": true }
+      "teleport": { "distance": 3, "leavesMine": true, "maxMines": 2 }
     }
   }
 }

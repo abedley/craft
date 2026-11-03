@@ -105,8 +105,12 @@ includes either team and the stalker itself. A charging pikeman killed by a mine
 Shots fly over mines. Mines are visible to both sides (drawn in the colour of the team that laid
 them), and `game.mines` lists them.
 
-It's all unit JSON: `"teleport": { "distance": 3, "leavesMine": true }` (add `"uses": n` to limit
-it). The CPU stalker closes in to about 3 hexes from your units and teleports away, leaving a mine
+**At most 2 mines at a time:** a stalker with 2 of its mines on the board **can't teleport**, since
+it couldn't lay another mine. That's checked when its teleport comes up in the queue, so if one of
+its mines goes off earlier in that same queue, the teleport goes ahead.
+
+It's all unit JSON: `"teleport": { "distance": 3, "leavesMine": true, "maxMines": 2 }` (add
+`"uses": n` to limit it). The CPU stalker closes in to about 3 hexes from your units and teleports away, leaving a mine
 in their path, when one gets within 2. CPU units never walk, charge or dodge onto a mine.
 
 ### CPU (`src/ai/cpu.js`)
@@ -255,8 +259,9 @@ error messages that name the unit and field.
 | `attack.reach` | melee: how many hexes in a row it strikes |
 | `attack.speed` | projectile: hexes flown per queue entry, 1–6 |
 | `attack.range` | projectile: max cells travelled; leave it out for unlimited |
-| `teleport` | optional `{ "distance": 3, "leavesMine": true, "uses": n }`: jump to any free walkable hex up to `distance` away; optionally leave a mine behind; `uses` per match (omit for unlimited) |
+| `teleport` | optional `{ "distance": 3, "leavesMine": true, "maxMines": 2, "uses": n }`: jump to any free walkable hex up to `distance` away; optionally leave a mine behind; can't teleport with `maxMines` of its mines down; `uses` per match (omit for unlimited) |
 | `charge` | optional `{ "distance": 3, "uses": 1 }`: a straight-line rush of up to `distance` hexes, ending with the unit's attack in that direction; goes to the front of the queue; `uses` times per unit per match |
+| `attack.maxInFlight` | optional, projectile attacks: can't fire while this many of the unit's projectiles are still in flight |
 | `attack.blockedByAdjacentEnemy` | optional, `true`: the attack fails if an enemy is next to the unit when its queue entry runs |
 | `default` | type used when a unit doesn't name one |
 | `renamed` | optional: old type keys mapped to current ones, so old saves still load |
@@ -294,6 +299,12 @@ other. A unit that walks into a hex where a shot is sitting is hit.
 
 So two gunslingers facing each other within 4 hexes: the one first in the queue wins, and the other
 never fires.
+
+**One shot in flight at a time:** a gunslinger **can't shoot while its last shot is still flying**
+(`attackBlocked`, reason `projectile in flight`). That's checked when its shot comes up in the
+queue. Its carried-over shot flies first each turn, so if that shot hits something or leaves the
+board, a new shot later in the same queue is allowed. Unit JSON: `"maxInFlight": 1` on the attack.
+The CPU doesn't plan a shot that would be blocked this way.
 
 **Gunslingers can't shoot with an enemy next to them.** If an enemy unit is on any of the 6 hexes
 around the gunslinger when its shot comes up in the queue, the shot fails and nothing is fired
