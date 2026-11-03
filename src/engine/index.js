@@ -13,4 +13,3 @@ export {
   UnitTypes, DEFAULT_UNIT_TYPE, RENAMED_TYPES, AttackKind, SHAPES,
   getUnitType, defineUnitType, registerUnitTypes,
 } from './unitTypes.js';
-export { resolveMoves } from './resolve.js';

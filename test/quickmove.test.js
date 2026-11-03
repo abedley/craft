@@ -25,9 +25,8 @@ test('a quick move goes to the front of the queue, ahead of the CPU\'s staged or
   assert.equal(g.queue[0].order.quick, true);
 });
 
-test('a quick move wins a same-instant contest the CPU would otherwise win', () => {
-  // Same setup as the CPU-priority test in match.test.js: the CPU pikeman
-  // and the player's unit step into the same hex at the same instant.
+test('a quick move beats the CPU to a hex it would otherwise win', () => {
+  // The CPU pikeman and the player's unit both head for the same hex.
   const setup = () => {
     const g = new Game({ width: 3, height: 5, units: [{ x: 0, y: 2 }, { x: 1, y: 0, team: C }] });
     const m = new Match(g);
@@ -46,8 +45,7 @@ test('a quick move wins a same-instant contest the CPU would otherwise win', () 
   const events = quick.m.endTurn();
   assert.deepEqual(pos(quick.g, 1), [quick.cell.x, quick.cell.y], 'player wins with a quick move');
   assert.deepEqual(pos(quick.g, 2), [1, 0]);
-  // The quick step lands at t = 0, before the CPU unit steps at t = 1, so the
-  // hex is already occupied when it arrives.
+  // The quick move runs first, so the hex is occupied when the CPU unit's turn comes.
   assert.ok(events.some((e) => e.type === 'blocked' && e.unitId === 2 && e.reason === 'occupied' && e.by === 1));
 });
 
@@ -59,7 +57,8 @@ test('the quick move is used up on tick, and only once', () => {
   assert.ok(events.some((e) => e.type === 'quickMove' && e.unitId === 1 && e.remaining === 0));
   assert.equal(g.getUnit(1).quickMoves, 0);
   assert.throws(() => g.queueOrder(1, quickMove(0, 5)), /no quick move left/);
-  // It's an ordinary standing move order from then on.
+  // It carries over as an ordinary walk from then on.
+  assert.deepEqual(g.queue, [{ unitId: 1, order: move(0, 3), carried: true }]);
   g.tick();
   g.tick();
   assert.deepEqual(pos(g, 1), [0, 3]);
@@ -79,16 +78,15 @@ test('replacing or clearing a queued quick move does not use it up', () => {
   assert.equal(g.getUnit(1).quickMoves, 1);
 });
 
-test('a quick move outranks the CPU for the rest of its journey', () => {
-  // Applied first, it gets the lowest order number, which it keeps while the
-  // unit walks on in later turns.
-  const g = new Game({ width: 1, height: 6, units: [{ x: 0, y: 0 }, { x: 0, y: 5, team: C }] });
+test('an unfinished quick move carries over ahead of the CPU\'s new orders', () => {
+  const g = new Game({ width: 1, height: 8, units: [{ x: 0, y: 0 }, { x: 0, y: 7, team: C }] });
   const m = new Match(g);
   m.startTurn();
   m.playerOrder(1, quickMove(0, 3));
   m.endTurn();
-  const seq = g.getUnit(1).orderSeq;
-  for (const u of g.units) if (u.id !== 1 && u.orderSeq !== null) assert.ok(seq < u.orderSeq);
+  assert.equal(g.queue[0].unitId, 1);
+  assert.equal(g.queue[0].carried, true);
+  assert.ok(!g.queue[0].order.quick, 'no longer quick, just an early walk');
 });
 
 test('quick moves stay in front when the CPU re-plans', () => {
@@ -115,9 +113,11 @@ test('quick moves are move orders only, and survive a snapshot round-trip', () =
 
 const kills = (events) => events.filter((e) => e.type === 'killed').map((e) => e.unitId);
 
-test('a quick move steps out of a shot that would land this turn, at every range 1-4', () => {
-  // CPU gunslinger at the top of column 1 shoots down; the player's unit is
-  // d hexes below (the shot reaches it at t = d/4, within this turn).
+test('a quick move steps out of a CPU shot that would land this turn; a normal move is too late', () => {
+  // CPU gunslinger at the top of column 1 shoots down at the player's unit
+  // d hexes below (within the shot's 4-hex flight). The CPU's order is ahead
+  // of the player's normal move in the queue, so the shot lands first; a
+  // quick move is ahead of the CPU, so the unit is gone before it fires.
   for (let d = 1; d <= 4; d++) {
     const setup = () => {
       const g = new Game({ width: 3, height: 7, units: [{ x: 1, y: 0, type: 'gunslinger', team: C }, { x: 1, y: d }] });
@@ -126,23 +126,27 @@ test('a quick move steps out of a shot that would land this turn, at every range
     };
     const side = [0, d]; // up-left of an odd column: off the shot's line
 
-    // A normal move leaves at t = 1: too late at range 1-3. At range 4 the
-    // shot also arrives at t = 1, and moves at an instant resolve before
-    // hits, so a normal move just escapes there.
     const plain = setup();
     plain.queueOrder(2, move(...side));
-    assert.deepEqual(kills(plain.tick()), d < 4 ? [2] : [], `range ${d}: normal move`);
+    assert.deepEqual(kills(plain.tick()), [2], `range ${d}: normal move is too late`);
 
     const quick = setup();
     quick.queueOrder(2, quickMove(...side));
     const events = quick.tick();
     assert.deepEqual(kills(events), [], `range ${d}: the quick move dodges`);
     assert.deepEqual(pos(quick, 2), side);
-    assert.ok(events.some((e) => e.type === 'moved' && e.unitId === 2));
   }
 });
 
-test('the quick step happens at t = 0 and replaces the unit\'s first step (same distance)', () => {
+test('a quick move also gets out of the way of a shot already in flight', () => {
+  const g = new Game({ width: 3, height: 10, units: [{ x: 1, y: 0, type: 'gunslinger', team: C }, { x: 1, y: 6 }] });
+  g.queueOrder(1, attack('down'));
+  g.tick(); // shot at (1,4), 2 hexes short; it flies first next turn
+  g.queueOrder(2, quickMove(0, 6));
+  assert.deepEqual(kills(g.tick()), []);
+});
+
+test('a quick move is a normal move otherwise: same distance as the unit\'s speed', () => {
   const g = new Game({ width: 1, height: 8, units: [{ x: 0, y: 0 }, { x: 0, y: 7, speed: 2 }] });
   g.queueOrder(1, quickMove(0, 5));
   g.queueOrder(2, quickMove(0, 2));
@@ -153,8 +157,7 @@ test('the quick step happens at t = 0 and replaces the unit\'s first step (same 
   assert.deepEqual(pos(g, 1), [0, 2], 'then walks on at its normal speed');
 });
 
-test('a quick move into the shot\'s path is still hit, and stepping along the line only delays it', () => {
-  // Stepping further down the same column: the shot still catches it.
+test('a quick move along the shot\'s line doesn\'t help', () => {
   const g = new Game({ width: 3, height: 8, units: [{ x: 1, y: 0, type: 'gunslinger', team: C }, { x: 1, y: 2 }] });
   g.queueOrder(1, attack('down'));
   g.queueOrder(2, quickMove(1, 3));

@@ -1,20 +1,25 @@
 // Turn structure for a player-vs-CPU match.
 //
+// The order queue decides everything (see engine/game.js): when the turn
+// ends, the queue runs front to back and each entry happens in full before
+// the next. Its order is:
+//
+//   1. quick moves (the player's one-time "go first" moves)
+//   2. entries carried over from last turn: projectiles still in flight and
+//      walks not yet finished, in the order they ran
+//   3. the CPU's new orders, which it stages first, at the start of the turn
+//   4. the player's new orders
+//
 // Each turn:
-//   1. startTurn(): the CPU looks at the board and stages all of its orders
-//      first. They go to the front of the order queue, before any player
-//      order, so under the "first ordered wins" collision rule the CPU wins
-//      same-instant ties for a cell.
-//   2. The player stages orders for their own units (playerOrder()). They
-//      can change them freely until the turn ends; the CPU's plan is fixed.
-//      Each player unit has one quick move per match: a move order that goes
-//      to the very front of the queue, ahead of the CPU, and whose first step
-//      happens at the very start of the tick, before anything else moves.
-//      It wins ties for a hex and can dodge a shot that would land this turn.
-//   3. endTurn(): runs one engine tick, then starts the next turn.
+//   1. startTurn(): the CPU looks at the board and stages its plan. Its new
+//      orders replace its units' carried-over walks. The plan is visible.
+//   2. The player stages orders for their own units (playerOrder()). A new
+//      order replaces that unit's carried-over walk. Each player unit has one
+//      quick move per match, which goes to the very front.
+//   3. endTurn(): runs the queue (one engine tick), then starts the next turn.
 //
 // All match state lives in the Game state (the CPU's staged orders are just
-// queued orders), so a Game snapshot is a complete save and undo is exact.
+// queue entries), so a Game snapshot is a complete save and undo is exact.
 
 import { Teams } from './engine/game.js';
 import { planTurn } from './ai/cpu.js';
@@ -48,20 +53,21 @@ export class Match {
     return MatchStatus.PLAYING;
   }
 
-  /** CPU stages its orders. Does nothing if it already has orders queued. */
+  /** CPU stages its orders. Does nothing if it already has new orders queued. */
   startTurn() {
     if (this.status !== MatchStatus.PLAYING) return [];
     const g = this.game;
-    const staged = g.queue.some((q) => g.getUnit(q.unitId)?.team === Teams.CPU);
-    if (staged) return [];
+    const isCpu = (e) => e.unitId !== undefined && g.getUnit(e.unitId)?.team === Teams.CPU;
+    if (g.queue.some((e) => isCpu(e) && !e.carried)) return [];
     const plan = planTurn(g, Teams.CPU);
-    // CPU orders go ahead of anything already queued (e.g. scenario setup),
-    // except quick moves, which always stay at the very front.
-    const quick = g.queue.filter((q) => q.order.quick);
-    const rest = g.queue.filter((q) => !q.order.quick);
+    const replaced = new Set(plan.map(([id]) => id));
+    const keep = g.queue.filter((e) => !(isCpu(e) && replaced.has(e.unitId)));
+    const quick = keep.filter((e) => e.order?.quick);
+    const carried = keep.filter((e) => e.carried);
+    const playerNew = keep.filter((e) => !e.carried && !e.order?.quick);
     g.state.queue = [];
     for (const [id, order] of plan) g.queueOrder(id, order);
-    g.state.queue = [...quick, ...g.state.queue, ...rest];
+    g.state.queue = [...quick, ...carried, ...g.state.queue, ...playerNew];
     return plan;
   }
 
@@ -74,8 +80,9 @@ export class Match {
     this.game.queueOrder(unitId, order);
   }
 
+  /** Remove the player's new orders this turn (carried-over walks stay). */
   clearPlayerOrders() {
-    this.game.clearQueue(Teams.PLAYER);
+    this.game.clearQueue(Teams.PLAYER, { newOnly: true });
   }
 
   /** Resolve the turn (one tick), then let the CPU stage the next one. */

@@ -10,7 +10,7 @@ import { planTurn } from '../src/ai/cpu.js';
 const C = Teams.CPU;
 const kills = (events) => events.filter((e) => e.type === 'killed').map((e) => e.unitId);
 
-test('pikeman strike kills both hexes in a row along a straight hex line', () => {
+test('a strike kills both hexes in a row along a straight hex line, in its own queue step', () => {
   const g = new Game({
     width: 5, height: 5,
     units: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 1 }, { x: 3, y: 1 }],
@@ -22,7 +22,7 @@ test('pikeman strike kills both hexes in a row along a straight hex line', () =>
   const t = events.find((e) => e.type === 'strike');
   assert.deepEqual(t.cells, [[1, 0], [2, 1]]);
   const k = events.find((e) => e.type === 'killed');
-  assert.deepEqual([k.time, k.hits[0].cause, k.hits[0].attackerId], ['1', 'melee', 1]);
+  assert.deepEqual([k.step, k.hits[0].cause, k.hits[0].attackerId], [1, 'melee', 1]);
 });
 
 test('strike direction validation: the 6 hex directions only', () => {
@@ -32,19 +32,26 @@ test('strike direction validation: the 6 hex directions only', () => {
   assert.doesNotThrow(() => g.queueOrder(1, attack('up-left')));
 });
 
-test('strike lands at the end of the tick: units that step out escape', () => {
-  const g = new Game({ width: 3, height: 5, units: [{ x: 1, y: 0 }, { x: 1, y: 1 }] });
-  g.queueOrder(1, attack('down')); // strikes (1,1) and (1,2)
-  g.queueOrder(2, move(2, 1)); // steps down-right, out of the column, at t=1
-  // Moves at t=1 resolve before the strike lands, so unit 2 is already gone.
-  assert.deepEqual(kills(g.tick()), []);
+test('queue order decides a strike vs a unit stepping out of reach', () => {
+  const setup = () => new Game({ width: 3, height: 5, units: [{ x: 1, y: 0 }, { x: 1, y: 1 }] });
+
+  const strikeFirst = setup();
+  strikeFirst.queueOrder(1, attack('down')); // hexes (1,1) and (1,2)
+  strikeFirst.queueOrder(2, move(2, 1)); // out of the column
+  assert.deepEqual(kills(strikeFirst.tick()), [2]);
+
+  const stepFirst = setup();
+  stepFirst.queueOrder(2, move(2, 1));
+  stepFirst.queueOrder(1, attack('down'));
+  assert.deepEqual(kills(stepFirst.tick()), []);
 });
 
-test('units walking into the strike zone are hit', () => {
+test('a strike only hits who is there when it runs: walking in afterwards is safe', () => {
   const g = new Game({ width: 3, height: 5, units: [{ x: 1, y: 0 }, { x: 2, y: 2 }] });
   g.queueOrder(1, attack('down'));
-  g.queueOrder(2, move(1, 2)); // (2,2) -> (1,2) is one step: down-left of an even column
-  assert.deepEqual(kills(g.tick()), [2]);
+  g.queueOrder(2, move(1, 2)); // into the struck hex, after the strike
+  assert.deepEqual(kills(g.tick()), []);
+  assert.deepEqual([g.getUnit(2).x, g.getUnit(2).y], [1, 2]);
 });
 
 test('friendly fire: the strike kills teammates too, and the pikeman holds still', () => {
@@ -54,29 +61,23 @@ test('friendly fire: the strike kills teammates too, and the pikeman holds still
   g.queueOrder(1, attack('down'));
   const events = g.tick();
   assert.deepEqual(kills(events), [2]);
-  assert.deepEqual([g.getUnit(1).y, g.getUnit(1).order], [1, null]);
+  assert.deepEqual([g.getUnit(1).y, g.orderFor(1)], [1, null]);
 });
 
-test('a pikeman killed earlier in the tick does not strike', () => {
+test('a pikeman killed earlier in the queue never strikes', () => {
   const g = new Game({ width: 3, height: 4, units: [{ x: 0, y: 0, type: 'gunslinger' }, { x: 0, y: 1 }, { x: 1, y: 1 }] });
-  g.queueOrder(1, attack('down')); // kills unit 2 at t=1/4
-  g.queueOrder(2, attack('down-right')); // (0,1) down-right is (1,1): would have killed unit 3 at t=1
+  g.queueOrder(1, attack('down')); // kills unit 2
+  g.queueOrder(2, attack('down-right')); // would have killed unit 3
   assert.deepEqual(kills(g.tick()), [2]);
   assert.ok(g.getUnit(3));
 });
 
-test('a pikeman shot at t=1 still strikes (simultaneous)', () => {
-  const g = new Game({ width: 3, height: 6, units: [{ x: 0, y: 0, type: 'gunslinger' }, { x: 0, y: 4 }, { x: 1, y: 4 }] });
-  g.queueOrder(1, attack('down')); // reaches (0,4) at t=1
-  g.queueOrder(2, attack('down-right')); // (0,4) down-right is (1,4)
-  assert.deepEqual(kills(g.tick()), [2, 3]);
-});
-
-test('two pikemen striking each other both die', () => {
+test('two pikemen facing each other: the first in the queue wins', () => {
   const g = new Game({ width: 1, height: 4, units: [{ x: 0, y: 0 }, { x: 0, y: 2, team: C }] });
-  g.queueOrder(1, attack('down'));
   g.queueOrder(2, attack('up'));
-  assert.deepEqual(kills(g.tick()), [1, 2]);
+  g.queueOrder(1, attack('down'));
+  assert.deepEqual(kills(g.tick()), [1]);
+  assert.ok(g.getUnit(2));
 });
 
 test('CPU pikeman strikes at an enemy in reach, picking the direction with the most enemies', () => {
@@ -132,14 +133,13 @@ test('CPU pikemen never strike a hex where a teammate stands or is about to step
   assert.ok(strikesChecked > 20, `checked ${strikesChecked} strikes`);
 });
 
-test('CPU plan is staged before the player and visible in the queue', () => {
+test('CPU plan is staged before the player, visible, and runs first', () => {
   const g = new Game({ width: 1, height: 5, units: [{ x: 0, y: 0 }, { x: 0, y: 2, team: C }] });
   const m = new Match(g);
   m.startTurn();
   assert.deepEqual(g.queue, [{ unitId: 2, order: attack('up') }]);
-  // The player sees the strike coming. In a 1-wide column there's nowhere to
-  // step out of it, so they strike back and both pikemen die.
+  // A counter-strike queued after it never happens: the CPU's strike runs first.
   m.playerOrder(1, attack('down'));
   m.endTurn();
-  assert.equal(g.units.length, 0);
+  assert.deepEqual(g.units.map((u) => u.id), [2]);
 });

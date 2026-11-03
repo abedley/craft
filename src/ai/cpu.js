@@ -9,9 +9,10 @@
 // Behaviour comes from each unit's type definition (src/data/units.json), so
 // new units defined in JSON get sensible play without code changes. Per unit,
 // in priority order:
-//   1. Dodge: if a projectile (anyone's: friendly fire is on) will reach this
-//      unit within the next two ticks with nothing in between, and there's
-//      still time to step out of its line, step sideways into a free cell.
+//   1. Dodge: if a projectile in flight (anyone's: friendly fire is on) will
+//      hit this unit on its flight after next, with nothing in between, step
+//      sideways off its line. (One that hits on its next flight can't be
+//      outrun: it's ahead of the CPU's moves in the queue.)
 //   2. Attack, by attack kind:
 //      - projectile: fire if the first unit along an allowed direction, within
 //        range, is an enemy (never when a teammate is first in line); nearest
@@ -166,12 +167,14 @@ function firingPosition(game, u, atk, enemies, walk) {
 }
 
 /**
- * If an incoming projectile threatens this unit soon and it can still get
- * out of the way, return a free neighbouring cell off the projectile's line.
+ * If a projectile in flight will hit this unit on its flight AFTER next, step
+ * off its line now. (Projectiles in flight are carried over to the front of
+ * next turn's queue, ahead of the CPU's moves, so one that reaches the unit
+ * on its very next flight can't be outrun; the CPU has no quick moves.)
  */
 function dodgeCell(game, u) {
   for (const p of game.projectiles) {
-    // How many steps until p reaches u's cell, if u is on p's path at all?
+    // How many hexes until p reaches u's hex, if u is on p's path at all?
     let k = 0;
     let [x, y] = [p.x, p.y];
     while (game.inBounds(x, y) && !(x === u.x && y === u.y) && k <= 2 * p.speed) {
@@ -179,13 +182,12 @@ function dodgeCell(game, u) {
       k += 1;
     }
     if (k === 0 || x !== u.x || y !== u.y) continue;
+    if (k <= p.speed) continue; // it hits before we can move: nothing to do
+    if (k > 2 * p.speed) continue; // not urgent yet
     if (p.range !== null && p.traveled + k > p.range) continue; // falls short
     // Something else in between will take the hit.
     const first = firstInLine(game, p.x, p.y, p.dir);
     if (!first || first.unit.id !== u.id) continue;
-    // The unit leaves its cell at t = 1/speed; the projectile arrives at
-    // t = k/p.speed. Dodging only helps if the unit gets out first.
-    if (k * u.speed <= p.speed) continue;
     // Step to a free neighbour off the projectile's line.
     for (const side of DIR_PRIORITY) {
       if (side === p.dir || side === OPPOSITE[p.dir]) continue;

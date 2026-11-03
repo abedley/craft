@@ -25,13 +25,12 @@ src/engine/           deterministic game engine (no DOM)
   unitTypes.js        loads + validates unit definitions from JSON
   terrain.js          loads + validates terrain definitions from JSON
   orders.js           order constructors + validation (move, attack)
-  resolve.js          simultaneous move / collision resolution
 src/data/units.json   unit definitions (add new units here)
 src/data/terrain.json terrain definitions (add new terrain here)
 src/match.js          turn structure: CPU stages orders, player orders, end turn
 src/ai/cpu.js         deterministic CPU opponent
 src/ui/               canvas renderer + debug controls
-src/scenarios.js      preset boards that exercise collision rules
+src/scenarios.js      preset boards: matches and rule demos
 test/                 node:test suites for the engine
 ```
 
@@ -46,25 +45,21 @@ The game is played by two teams: the player (blue) and the CPU (pink). Every uni
 Each turn (`src/match.js`):
 
 1. **The CPU stages all of its orders first** (`match.startTurn()`), looking only at the board as it
-   stands. Its orders go to the front of the queue, so under the "first ordered wins" rule the CPU wins
-   same-instant ties for a cell.
+   stands. Its new orders go ahead of the player's in the queue (see *The queue* below), so they
+   happen first.
 2. The player stages orders for their own units (`match.playerOrder()`); the CPU's plan is fixed.
    The player cannot order CPU units.
-3. **End turn** (`match.endTurn()`) runs one tick, then the CPU stages the next turn.
+3. **End turn** (`match.endTurn()`) runs the queue, then the CPU stages the next turn.
 
 ### Quick move
 
 Each of the player's units has **one quick move per match** (`quickMove(x, y)`; CPU units have none).
-It's a move order that **goes first**, in two ways:
-
-- **In the queue:** it goes to the very front, ahead of the CPU's staged orders. Being applied
-  first, it counts as the earliest order given, and keeps that priority for the rest of the walk.
-- **In time:** the unit's first step that turn happens at **t = 0**, an extra instant before
-  anything else moves, instead of at its usual time (t = 1 for speed 1). It covers the same distance,
-  just sooner. That means **a quick move out of a shot's line saves the unit from a gunslinger shot
-  that would land this turn**. A normal move only leaves at t = 1, too late for a shot fired from 1–3
-  hexes away (a shot from 4 away arrives at t = 1 too, and a normal move just escapes it). Stepping
-  along the shot's line doesn't help; you have to step off it.
+It's a move order that goes to the **very front of the queue**, so it happens before anything else
+that turn, including the CPU's orders and shots still in flight. That's how it **saves a unit from a
+gunslinger shot that would land this turn**: the unit has stepped off the shot's line before the
+shot is fired. A normal move comes after the CPU's orders, too late. Stepping along the shot's
+line doesn't help; you have to step off it. If the walk isn't finished, it carries over to later
+turns as an ordinary walk.
 
 - It's only used up when the turn runs. Replacing it with another order or clearing it first
   costs nothing.
@@ -78,8 +73,9 @@ wiped out in the same tick). Boards with no CPU units are sandboxes and never en
 
 Deterministic: same board, same plan. For each CPU unit in id order:
 
-1. **Dodge** an incoming projectile that would reach it within two ticks with nothing in between, if
-   it can still step out of the line in time.
+1. **Dodge**: step off the line of a shot in flight that would hit it on the flight *after* next.
+   (A shot that hits on its next flight can't be outrun: it's carried over ahead of the CPU's moves,
+   and the CPU has no quick moves.)
 2. **Attack**:
    - Projectile units shoot if the first unit in an allowed direction, within range, is an enemy
      (nearest first), and never when a teammate is first in line.
@@ -125,8 +121,9 @@ Every hex has a terrain type, defined in **`src/data/terrain.json`** (validated 
 ignore terrain: you can shoot across a river.
 
 - **Pathfinding:** units walk the shortest route around unwalkable hexes. Among equally short routes
-  they prefer the straight hex line, so in open ground they move exactly as before. Other units are
-  not avoided (that's what the collision rules handle). With no route at all, a unit stays put.
+  they prefer the straight hex line, so in open ground they walk straight. Other units are not
+  avoided: a unit stops when its next hex is occupied (see *The queue*). With no route at all, a unit
+  stays put.
 - **Maps:** pass `terrain` to `new Game` as one string per row, one `char` per hex, e.g.
   `'~=~~~~=~'`. Omit it for all-default. `game.terrainAt(x, y)`, `game.isWalkable(x, y)` and
   `game.setTerrain(x, y, type)` read and edit it (you can't make an occupied hex unwalkable).
@@ -135,42 +132,44 @@ ignore terrain: you can shoot across a river.
   and reach.
 - **Adding a terrain type** is a JSON-only change. New *rules* (e.g. movement cost, cover) need code.
 
-## Engine model
+## The queue (engine model)
 
-- The world is a `width x height` hex grid; each hex holds at most one unit.
-- Every unit has a **type** (`src/engine/unitTypes.js`) that defines its speed, which orders it
-  accepts, and what it fires. Ordering a unit to do something its type can't do throws.
-- During a turn the player queues orders (`game.queueOrder(unitId, move(x, y))`,
-  `game.queueOrder(unitId, attack('down'))`). Nothing changes until `game.tick()`.
-  If a unit gets several orders in one turn, only the last is carried out.
-- `tick()`:
-  1. applies queued orders in queue order (see *Combat* for `attack`),
-  2. moves units in timed **sub-steps** (see *Speed* below); at each sub-step every unit
-     due to step moves one hex along a shortest walkable route to its target (straight hex line
-     where possible; see *Terrain*) and those steps are resolved **simultaneously**,
-  3. units that reached their target drop their order.
-  It returns an event list (`orderApplied`, `moved` with the full `path`, `blocked` with the
-  sub-step `time` it first happened, `arrived`, `shot`, `strike`, `projectileMoved`, `killed`,
-  `projectileExpired`).
-- Move orders persist across ticks until the unit arrives or gets a new order.
-  A blocked unit simply tries again next tick.
+**The order queue decides everything.** When a turn runs (`game.tick()`), the queue is carried out
+front to back, and **each entry happens in full before the next one starts**, on the board exactly
+as the entries before it left it. There are no hidden phases or simultaneous moves: whatever is
+earlier in the queue happens first.
 
-### Speed
+**Queue order** each turn:
 
-Each unit has a `speed` (cells per tick, 1–6, default 1): `new Game({ units: [{ x, y, speed: 3 }] })`,
-`game.addUnit(x, y, id, { speed })`, `game.setSpeed(id, speed)`.
+1. **Quick moves** (the player's one-time "go first" moves)
+2. **Carried over from last turn**: shots still in flight and walks not yet finished, in the order
+   they ran
+3. **The CPU's new orders** (it stages its plan first)
+4. **The player's new orders**
 
-A unit with speed *s* takes one step at times 1/s, 2/s, …, 1 within the tick. The engine walks
-through every distinct step time in order (exactly, using integer math over the lcm of all
-speeds). At each instant, the units stepping then are resolved together with the
-single-step collision rules below, while everyone else stands still and holds their cell. So:
+A unit has at most one entry; giving it a new order replaces the old one, including a carried-over
+walk (the new order goes where new orders go).
 
-- "Who got there first" means real arrival time within the tick: a speed-3 unit reaching a cell at
-  t=2/3 keeps it against a speed-1 unit arriving at t=1, regardless of order age.
-- Units arriving at the *same* instant use the normal contest rule (first ordered wins).
-- No unit can jump over or pass through another; a fast unit stuck behind a slow one moves at the
-  slow one's pace.
-- A blocked unit retries at its own next step time within the same tick.
+**What each entry does when its turn comes:**
+
+- **Move** (`move(x, y)`): the unit walks up to its `speed` in hexes along a shortest walkable route
+  (straight hex line where possible; see *Terrain*). If the next hex is occupied, it stops there:
+  whoever is in the hex got there first. If it hasn't arrived, the order carries over to next turn.
+- **Attack** (`attack(dir)`): see *Combat*. The unit doesn't move that turn.
+- **Projectile in flight**: flies another `speed` hexes (see *Combat*).
+
+So, for example: two units heading for the same hex, the one earlier in the queue gets it; two units
+trying to swap places both stay put; a line of units walks together only if the front unit is
+first in the queue; a fast unit gains distance, not priority.
+
+Events from `tick()` (`orderStarted`, `moved` with the full `path`, `blocked`, `arrived`, `shot`,
+`projectileMoved`, `strike`, `killed`, `projectileExpired`, `quickMove`) all carry `step`, the
+queue position that caused them. `game.orderFor(id)` returns a unit's queued order; carried-over
+entries are marked `carried: true`.
+
+Other basics: the world is a `width x height` hex grid; each hex holds at most one unit. Every unit
+has a **type** that defines its speed and attack; ordering a unit to do something its type can't do
+throws.
 
 ### Unit types (defined in JSON)
 
@@ -197,13 +196,13 @@ error messages that name the unit and field.
 | Field | Meaning |
 | --- | --- |
 | `name` | display name (required) |
-| `speed` | cells per tick, 1–6 (required) |
+| `speed` | hexes walked per move entry, 1–6 (required) |
 | `shape` | `circle` (default), `diamond`, `square`, `triangle` |
 | `attack` | leave it out for a unit that can't attack |
 | `attack.kind` | `melee` or `projectile` |
 | `attack.directions` | `all` (the 6 hex directions), `vertical` (up/down), or a list like `["up", "down-left"]` |
 | `attack.reach` | melee: how many hexes in a row it strikes |
-| `attack.speed` | projectile: cells per tick, 1–6 |
+| `attack.speed` | projectile: hexes flown per queue entry, 1–6 |
 | `attack.range` | projectile: max cells travelled; leave it out for unlimited |
 | `default` | type used when a unit doesn't name one |
 | `renamed` | optional: old type keys mapped to current ones, so old saves still load |
@@ -226,48 +225,25 @@ A unit's speed starts at its type's speed; `speed` / `setSpeed` override it for 
 ### Combat
 
 Every attacking unit uses the same order, `attack(dir)` (`dir`: one of the 6 hex directions,
-limited to what the type allows). The unit holds
-still that tick and any move order is cancelled. What happens depends on its `attack.kind`.
+limited to what the type allows). What happens when the entry runs depends on `attack.kind`:
 
-**Melee** (pikeman):
+**Melee** (pikeman): every unit in the `reach` hexes in a straight line next to the attacker is
+killed, right then, teammates included. A unit that stepped away earlier in the queue escapes; one
+that walks in later is safe. A pikeman killed earlier in the queue never strikes.
 
-- Strikes at the **end of the tick** (t = 1). Every unit in the `reach` hexes in a straight line next to it
-  in that direction dies, teammates included.
-- Because it lands at the end, a unit that steps out of the zone during the tick escapes, and a unit
-  that walks into it is hit. Combined with the visible CPU plan, you can dodge a CPU strike or aim yours
-  where a CPU unit is heading.
-- It happens at the same instant as any projectile hits at t = 1: a striker shot at t = 1 still strikes,
-  but one killed earlier in the tick doesn't. Two pikemen striking each other both die.
+**Projectile** (gunslinger): a shot is fired from the unit's hex and immediately flies up to its
+`speed` (4) hexes in a straight line. It kills the **first unit it meets** and is used up. If it
+doesn't hit anything, it stays in flight: it gets an entry in the carried-over part of next turn's
+queue and flies another 4 hexes then. It ends when it leaves the board or passes its `range` (if
+set). Shots fly over any terrain, never steer, don't block units, and don't collide with each
+other. A unit that walks into a hex where a shot is sitting is hit.
 
-**Projectile** (gunslinger):
-
-- The projectile spawns in the shooter's cell at the start of the tick.
-- Projectiles are on the same sub-step timeline as units (a speed-4 projectile steps at
-  t = ¼, ½, ¾, 1). They fly straight, never steer, are never blocked, don't block units, and keep
-  going across ticks until they hit something, leave the grid, or pass their `range` (if set).
-- At each instant, after units and projectiles have stepped, a projectile **hits** a unit if they
-  share a cell (except a projectile still sitting in its shooter's cell), or if they passed
-  through each other that instant. The unit is **killed and removed immediately**, freeing its cell for
-  the rest of the tick, and the projectile is used up. Only the first unit in the line is hit.
-- Same instant means same outcome for everyone: two gunslingers shooting each other both die.
-  Projectiles don't collide with each other.
-
-### Collision rules (`src/engine/resolve.js`)
-
-Guiding rule: **whoever got to a cell first keeps it, and the colliding unit doesn't move.**
-
-1. **Contested cell** – several units step into the same empty cell on the same tick: the unit
-   whose move order was given first wins (orders are stamped with a sequence number when applied;
-   unit id breaks exact ties). The rest don't move.
-2. **Swap** – two units try to trade cells: both stay.
-3. **Occupied** – a unit standing in a cell keeps it. A unit can enter an occupied cell only if its occupant leaves this tick.
-   Propagated to a fixed point, so a line of units moves together if its front is free and
-   stops together if not.
-4. **Rotation** – closed loops of 3+ units all move.
+So two gunslingers facing each other within 4 hexes: the one first in the queue wins, and the other
+never fires.
 
 ### Determinism
 
-The engine uses no randomness, clock, or DOM; units are processed in id order; state is
+The engine uses no randomness, clock, or DOM; the queue fixes the order of everything; state is
 plain JSON. `game.hash()` is an FNV-1a hash of canonical JSON state, shown in the debug
 UI header, so two runs with the same orders can be compared at a glance.
 `game.snapshot()` / `Game.fromSnapshot()` give exact save/restore.
@@ -297,7 +273,8 @@ UI header, so two runs with the same orders can be compared at a glance.
 - **Preview** draws green arrows along next tick's full unit paths, orange arrows for projectiles,
   a red X on units that will be killed, and dashed red rings on units that will be blocked.
 - **Scenario** loads preset collision cases.
-- Tabs: queued orders, per-tick event log, unit list, and raw state JSON (copy / edit / load).
+- Tabs: the queue in run order (quick / continuing / CPU / your new orders, and shots in flight), a
+  per-turn event log numbered by queue step, unit list, and raw state JSON (copy / edit / load).
 - `window.debug.game` is available in the browser console.
 
 ## Deploying

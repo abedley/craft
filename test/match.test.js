@@ -106,19 +106,21 @@ test('CPU gunslinger walks to a nearest cell with a clear shot', () => {
   }
 });
 
-test('CPU dodges an incoming projectile when it has time', () => {
+test('CPU steps off the line of a shot in flight when it still can', () => {
+  // A shot in flight flies first next turn (ahead of the CPU's moves). One
+  // that would reach the CPU unit on that flight can't be outrun, so the CPU
+  // doesn't try; one that would only reach it on the flight after, can be.
   const g = new Game({ width: 3, height: 10, units: [{ x: 1, y: 0, type: G }, { x: 1, y: 7, team: C }] });
   g.queueOrder(1, attack('down'));
-  g.tick(); // projectile at (1,4), 3 cells away: it arrives at t=3/4, before
-  // the unit could leave at t=1, so a dodge can't work and isn't tried.
+  g.tick(); // shot at (1,4), 3 hexes away: it hits on its next flight
   assert.ok(!planTurn(g, C).some(([, o]) => o.type === 'move' && o.x !== 1));
 
-  const g2 = new Game({ width: 3, height: 14, units: [{ x: 1, y: 0, type: G }, { x: 1, y: 9, team: C }] });
+  const g2 = new Game({ width: 3, height: 14, units: [{ x: 1, y: 0, type: G }, { x: 1, y: 10, team: C }] });
   g2.queueOrder(1, attack('down'));
-  g2.tick(); // projectile at (1,4), 5 away: reaches (1,9) at t=5/4; unit leaves at t=1
+  g2.tick(); // shot at (1,4), 6 hexes away: reaches (1,8) next flight, (1,10) the one after
   const m = new Match(g2, { vsCpu: true });
   m.startTurn();
-  assert.deepEqual(g2.queue[0], { unitId: 2, order: move(2, 9) }); // up-right, off the line
+  assert.deepEqual(g2.queue.find((e) => e.unitId === 2), { unitId: 2, order: move(2, 10) }); // up-right, off the line
   m.endTurn();
   m.endTurn();
   assert.ok(g2.getUnit(2), 'CPU unit survived');
@@ -126,24 +128,28 @@ test('CPU dodges an incoming projectile when it has time', () => {
 
 test('match status: won, lost, draw', () => {
   const won = new Match(new Game({ width: 1, height: 5, units: [{ x: 0, y: 0, type: G }, { x: 0, y: 4, team: C }] }));
-  won.startTurn();
-  won.playerOrder(1, attack('down'));
-  // The CPU pikeman walks toward us and passes through our shot.
+  won.startTurn(); // the CPU pikeman (out of reach) steps to (0,3)
+  won.playerOrder(1, attack('down')); // then our shot reaches it
   won.endTurn();
   assert.equal(won.status, MatchStatus.WON);
   assert.throws(() => won.playerOrder(1, move(0, 1)), /over/);
 
-  const draw = new Match(new Game({ width: 1, height: 5, units: [{ x: 0, y: 0, type: G }, { x: 0, y: 4, type: G, team: C }] }));
-  draw.startTurn(); // CPU shoots up
-  draw.playerOrder(1, attack('down'));
-  draw.endTurn();
-  draw.endTurn();
-  assert.equal(draw.status, MatchStatus.DRAW);
-
-  const lost = new Match(new Game({ width: 1, height: 5, units: [{ x: 0, y: 0 }, { x: 0, y: 4, type: G, team: C }] }));
+  // The CPU's shot is staged first, so it lands before ours is ever fired.
+  const lost = new Match(new Game({ width: 1, height: 5, units: [{ x: 0, y: 0, type: G }, { x: 0, y: 4, type: G, team: C }] }));
   lost.startTurn();
+  lost.playerOrder(1, attack('down'));
   lost.endTurn();
   assert.equal(lost.status, MatchStatus.LOST);
+
+  // Draw: two shots 6 hexes apart are both fired on turn 1 (out of range) and
+  // both land on turn 2, when they fly first as carried-over entries.
+  const draw = new Match(new Game({ width: 1, height: 7, units: [{ x: 0, y: 0, type: G }, { x: 0, y: 6, type: G, team: C }] }));
+  draw.startTurn();
+  draw.playerOrder(1, attack('down'));
+  draw.endTurn();
+  assert.equal(draw.status, MatchStatus.PLAYING);
+  draw.endTurn();
+  assert.equal(draw.status, MatchStatus.DRAW);
 
   const sandbox = new Match(new Game({ width: 1, height: 3, units: [{ x: 0, y: 0 }] }));
   assert.equal(sandbox.status, MatchStatus.PLAYING);

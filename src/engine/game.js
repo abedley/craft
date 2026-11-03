@@ -1,14 +1,38 @@
-// Core game state and the tick loop.
+// Core game state and the turn loop.
 //
-// Determinism rules for the engine:
-//   * No Math.random, Date, or other ambient input inside the engine.
-//   * Units and projectiles are always processed in ascending id order.
-//   * Orders are applied in the order they were queued.
-//   * State is plain JSON so it can be snapshotted, hashed and replayed.
+// THE QUEUE DECIDES EVERYTHING. A turn (tick) runs the order queue from front
+// to back; each entry is carried out completely, against the board exactly as
+// the entries before it left it, before the next one starts. There are no
+// hidden phases or simultaneous resolution: whatever is earlier in the queue
+// happens first.
+//
+// Queue entries:
+//   { unitId, order }      a unit's order (move or attack)
+//   { projectileId }       a projectile still in flight from an earlier turn
+// An entry may also carry `carried: true` (left over from last turn).
+//
+// Where entries go (see queueOrder and match.js):
+//   1. quick moves                      (very front)
+//   2. carried over from last turn      (in the order they ran last turn)
+//   3. the CPU's new orders             (it stages its plan first)
+//   4. the player's new orders
+//
+// What each entry does when its turn comes:
+//   move        The unit walks up to `speed` hexes along its route. It stops
+//               early if the next hex is occupied (whoever is there got there
+//               first). Walking into a hex with a projectile in it is a hit.
+//               If it hasn't arrived, the order carries over to next turn.
+//   attack      projectile kind: a projectile is fired from the unit's hex
+//               and immediately flies up to its `speed` hexes, killing the
+//               first unit it meets. Still flying? It carries over.
+//               melee kind: every unit in the `reach` hexes in a row next to
+//               the attacker is killed, right now (friendly fire included).
+//   projectile  (carried over) flies another `speed` hexes the same way.
+//
+// Determinism: no randomness, clock or DOM; state is plain JSON.
 
 import { validateOrder, OrderType } from './orders.js';
 import { step, hexLineStep, neighbors } from './hex.js';
-import { resolveMoves } from './resolve.js';
 import * as Units from './unitTypes.js';
 import { getUnitType, AttackKind, MAX_SPEED } from './unitTypes.js';
 import * as Terrain from './terrain.js';
@@ -16,9 +40,8 @@ import { getTerrainType, terrainForChar } from './terrain.js';
 
 export { MAX_SPEED };
 
-/** Sides. Friendly fire is on: projectiles hit any unit regardless of team. */
+/** Sides. Friendly fire is on: attacks hit any unit regardless of team. */
 export const Teams = Object.freeze({ PLAYER: 'player', CPU: 'cpu' });
-
 
 export class Game {
   /**
@@ -34,15 +57,15 @@ export class Game {
     }
     this.state = {
       grid: 'hex', // flat-topped hexes, odd-q offset coordinates (see hex.js)
+      queueVersion: 2, // sequential queue model
       width,
       height,
       tick: 0,
       nextUnitId: 1,
-      nextOrderSeq: 1, // stamps applied orders so "first ordered" is well defined
       nextProjectileId: 1,
       units: [], // kept sorted by id
       projectiles: [], // kept sorted by id
-      queue: [], // [{ unitId, order }]
+      queue: [], // see the top of this file
       // Terrain type key per hex, row-major: terrain[y * width + x].
       terrain: parseTerrain(terrain, width, height),
     };
@@ -56,9 +79,10 @@ export class Game {
     if (snapshot.grid !== 'hex') {
       throw new Error('This save is from the square-grid version of the game and can\'t be loaded on the hex grid');
     }
+    if (snapshot.queueVersion !== 2) {
+      throw new Error('This save is from an older version of the turn rules and can\'t be loaded');
+    }
     game.state = structuredClone(snapshot);
-    for (const u of game.state.units) u.quickMoves ??= u.team === Teams.PLAYER ? 1 : 0;
-    game.state.terrain ??= parseTerrain(null, snapshot.width, snapshot.height);
     return game;
   }
 
@@ -78,16 +102,33 @@ export class Game {
   get units() { return this.state.units; }
   get projectiles() { return this.state.projectiles; }
   get queue() { return this.state.queue; }
+  get terrain() { return this.state.terrain; }
 
   getUnit(id) {
     return this.state.units.find((u) => u.id === id) ?? null;
+  }
+
+  getProjectile(id) {
+    return this.state.projectiles.find((p) => p.id === id) ?? null;
   }
 
   unitAt(x, y) {
     return this.state.units.find((u) => u.x === x && u.y === y) ?? null;
   }
 
-  get terrain() { return this.state.terrain; }
+  projectileAt(x, y) {
+    return this.state.projectiles.find((p) => p.x === x && p.y === y) ?? null;
+  }
+
+  /** The unit's queue entry, if it has one. */
+  entryFor(unitId) {
+    return this.state.queue.find((e) => e.unitId === unitId) ?? null;
+  }
+
+  /** The unit's queued order (new or carried over), or null. */
+  orderFor(unitId) {
+    return this.entryFor(unitId)?.order ?? null;
+  }
 
   /** Terrain type key of a hex. */
   terrainAt(x, y) {
@@ -100,6 +141,12 @@ export class Game {
     return isWalkable(this.state, x, y);
   }
 
+  inBounds(x, y) {
+    return x >= 0 && y >= 0 && x < this.state.width && y < this.state.height;
+  }
+
+  // ---- editing (between turns) ---------------------------------------------
+
   /** Change one hex's terrain. Can't make an occupied hex unwalkable. */
   setTerrain(x, y, type) {
     if (!this.inBounds(x, y)) throw new Error(`Cell ${x},${y} is out of bounds`);
@@ -109,12 +156,6 @@ export class Game {
     this.state.terrain[y * this.state.width + x] = type;
   }
 
-  inBounds(x, y) {
-    return x >= 0 && y >= 0 && x < this.state.width && y < this.state.height;
-  }
-
-  // ---- mutation (between ticks) -------------------------------------------
-
   /**
    * @param {number} x
    * @param {number} y
@@ -123,7 +164,7 @@ export class Game {
    *   type: key of UnitTypes (default: the units file's "default").
    *   team: Teams.PLAYER (default) or Teams.CPU.
    *   Player units start with one quick move (see queueOrder); CPU units have none.
-   *   speed: cells per tick; defaults to the type's speed. Overriding it is
+   *   speed: hexes per move; defaults to the type's speed. Overriding it is
    *   meant for debugging/tests.
    */
   addUnit(x, y, id, { type = Units.DEFAULT_UNIT_TYPE, team = Teams.PLAYER, speed } = {}) {
@@ -137,8 +178,7 @@ export class Game {
     const unitId = id ?? this.state.nextUnitId;
     if (this.getUnit(unitId)) throw new Error(`Unit id ${unitId} already exists`);
     this.state.nextUnitId = Math.max(this.state.nextUnitId, unitId + 1);
-    // orderSeq: when the current order was applied (lower = given earlier).
-    const unit = { id: unitId, team, type, x, y, speed, quickMoves: team === Teams.PLAYER ? 1 : 0, order: null, orderSeq: null };
+    const unit = { id: unitId, team, type, x, y, speed, quickMoves: team === Teams.PLAYER ? 1 : 0 };
     this.state.units.push(unit);
     this.state.units.sort((a, b) => a.id - b.id);
     return unit;
@@ -157,18 +197,16 @@ export class Game {
   }
 
   /**
-   * Queue an order for a unit. It takes effect on the next tick(). A unit has
-   * at most one queued order: queueing another replaces it.
+   * Queue an order for a unit. A unit has at most one queue entry: a new
+   * order replaces its old one (including one carried over from last turn).
    *
-   * Quick moves (move orders with `quick: true`) go to the FRONT of the
-   * queue, after any other quick moves already there. Being applied first,
-   * they count as the earliest-given orders and win same-instant contests
-   * for a hex (see resolve.js). The unit's quick move is only used up when
-   * the order is applied on tick(), so replacing or clearing it first costs
-   * nothing.
+   * Placement: a quick move goes to the very front (after any other quick
+   * moves); any other order goes to the back. (match.js puts the CPU's plan
+   * ahead of the player's new orders.) A quick move is only used up when it
+   * runs, so replacing or clearing it first costs nothing.
    *
-   * Throws if the order is invalid (including orders the unit's type can't
-   * perform, or a quick move the unit doesn't have) so the UI can report it.
+   * Throws if the order is invalid (wrong for the unit's type, a move onto
+   * unwalkable terrain, or a quick move the unit doesn't have).
    */
   queueOrder(unitId, order) {
     const unit = this.getUnit(unitId);
@@ -182,7 +220,7 @@ export class Game {
     const q = this.state.queue.filter((e) => e.unitId !== unitId);
     const entry = { unitId, order: structuredClone(order) };
     if (order.quick) {
-      const firstNonQuick = q.findIndex((e) => !e.order.quick);
+      const firstNonQuick = q.findIndex((e) => !e.order?.quick);
       q.splice(firstNonQuick === -1 ? q.length : firstNonQuick, 0, entry);
     } else {
       q.push(entry);
@@ -190,252 +228,170 @@ export class Game {
     this.state.queue = q;
   }
 
-  /** Remove queued orders; with a team, only that team's orders. */
-  clearQueue(team = null) {
-    this.state.queue = team === null
-      ? []
-      : this.state.queue.filter((q) => this.getUnit(q.unitId)?.team !== team);
+  /**
+   * Remove unit orders from the queue; with a team, only that team's.
+   * Projectiles in flight are never removed. With `newOnly`, orders carried
+   * over from last turn are kept.
+   */
+  clearQueue(team = null, { newOnly = false } = {}) {
+    this.state.queue = this.state.queue.filter((e) => {
+      if (e.projectileId !== undefined) return true;
+      if (newOnly && e.carried) return true;
+      return team !== null && this.getUnit(e.unitId)?.team !== team;
+    });
   }
 
-  // ---- simulation --------------------------------------------------------
+  // ---- the turn ------------------------------------------------------------
 
   /**
-   * Advance the simulation by one tick.
-   *
-   * 1. Apply queued orders (only the last one per unit, in queue order).
-   *    - move: becomes the unit's standing order. A quick move also uses up
-   *      one of the unit's quick moves; it was queued at the front, so it
-   *      gets the lowest order number and wins same-instant contests for as
-   *      long as the unit follows it. It also goes first in time: the unit's
-   *      first step this tick happens at t = 0 (an extra instant before
-   *      anything else moves) instead of at t = 1/speed. Same distance, just
-   *      sooner, so it can step out of the line of a shot that would land
-   *      this tick.
-   *    - attack: the unit holds still this tick and any move order is
-   *      cancelled. What happens depends on its type's attack kind:
-   *        projectile: a projectile is fired from the unit's cell right away;
-   *        melee: the unit strikes at the END of the tick (see 2e).
-   *
-   * 2. Run the tick as a sequence of instants ("sub-steps"). Anything with
-   *    speed v (units and projectiles) takes one step at each of the times
-   *    1/v, 2/v, ..., 1. With L = lcm of all speeds, sub-step j is at time
-   *    j/L; integer math only, so it is exact and deterministic. At each
-   *    instant:
-   *      a. Units stepping now pick their next cell toward their target and
-   *         are resolved together with the single-step collision rules (see
-   *         resolve.js); everyone else holds their cell. Whoever got to a cell
-   *         first keeps it; no one can jump over anyone. Projectiles never
-   *         block units.
-   *      b. Projectiles stepping now advance one cell in their direction.
-   *         They never steer and are never blocked.
-   *      c. Hits: a projectile hits a unit if, after (a) and (b), they share
-   *         a cell (other than a projectile still sitting in its shooter's
-   *         cell), or if they passed through each other this instant (unit
-   *         moved P'->P while the projectile moved P->P'). The unit is killed
-   *         and removed at once, freeing its cell; the projectile is used up.
-   *         Projectiles don't interact with each other.
-   *      d. Projectiles that left the grid or went past their range are
-   *         removed.
-   *      e. At the last instant (t = 1) only, at the same moment as that
-   *         instant's projectile hits: each melee attacker still alive kills
-   *         every unit in the `reach` cells in a row next to it in its
-   *         direction (friendly fire included). Units that left those cells
-   *         earlier escape; units that walked in get hit.
-   *    A unit blocked at one of its sub-steps retries at its next one.
-   *
-   * 3. Units that reached their target drop their order.
-   *
-   * Returns the list of events. Each unit produces at most one "moved"
-   * event (full path) and at most one "blocked" event (first time it was
-   * blocked); each projectile at most one "projectileMoved" event.
+   * Run the queue front to back (see the top of this file). Every event has
+   * `step`: the 1-based position in the queue of the entry that caused it.
+   * The entries still active afterwards (unfinished moves, projectiles in
+   * flight) become next turn's queue, marked `carried`, in the order they
+   * ran. Returns the events.
    */
   tick() {
     const s = this.state;
     const events = [];
+    const carried = [];
 
-    // 1. Apply queued orders: last one per unit wins.
-    const strikes = []; // melee attacks [{ unitId, dir }], landing at t = 1
-    const quickIds = new Set(); // units whose quick move was applied this tick
-    const lastIndex = new Map();
-    s.queue.forEach((q, i) => lastIndex.set(q.unitId, i));
-    s.queue.forEach(({ unitId, order }, i) => {
-      if (lastIndex.get(unitId) !== i) return;
-      const unit = this.getUnit(unitId);
-      if (!unit) {
-        events.push({ type: 'orderDropped', unitId, reason: 'unit missing' });
+    s.queue.forEach((entry, i) => {
+      const stepNo = i + 1;
+      if (entry.projectileId !== undefined) {
+        const p = this.getProjectile(entry.projectileId);
+        if (p && this.fly(p, events, stepNo)) carried.push({ projectileId: p.id, carried: true });
         return;
       }
-      events.push({ type: 'orderApplied', unitId, order });
-      if (order.type === OrderType.ATTACK) {
-        unit.order = null;
-        unit.orderSeq = null;
-        const atk = getUnitType(unit.type).attack;
-        if (atk.kind === AttackKind.PROJECTILE) {
-          const p = {
-            id: s.nextProjectileId++,
-            ownerId: unit.id,
-            x: unit.x,
-            y: unit.y,
-            dir: order.dir,
-            speed: atk.speed,
-            range: atk.range,
-            traveled: 0,
-          };
-          s.projectiles.push(p);
-          events.push({ type: 'shot', unitId: unit.id, projectileId: p.id, dir: p.dir, from: [p.x, p.y] });
-        } else if (atk.kind === AttackKind.MELEE) {
-          strikes.push({ unitId: unit.id, dir: order.dir });
-        }
-      } else {
-        unit.order = order;
-        unit.orderSeq = s.nextOrderSeq++;
+
+      const unit = this.getUnit(entry.unitId);
+      if (!unit) {
+        events.push({ type: 'orderDropped', step: stepNo, unitId: entry.unitId, reason: 'unit gone' });
+        return;
+      }
+      const { order } = entry;
+      events.push({ type: 'orderStarted', step: stepNo, unitId: unit.id, order, carried: !!entry.carried });
+
+      if (order.type === OrderType.MOVE) {
         if (order.quick) {
-          quickIds.add(unit.id);
           unit.quickMoves -= 1;
-          events.push({ type: 'quickMove', unitId: unit.id, to: [order.x, order.y], remaining: unit.quickMoves });
+          events.push({ type: 'quickMove', step: stepNo, unitId: unit.id, remaining: unit.quickMoves });
+        }
+        if (this.walk(unit, order, events, stepNo)) {
+          const { quick, ...rest } = order; // a carried quick move is an ordinary move now
+          carried.push({ unitId: unit.id, order: rest, carried: true });
+        }
+        return;
+      }
+
+      // Attack.
+      const atk = getUnitType(unit.type).attack;
+      if (atk.kind === AttackKind.PROJECTILE) {
+        const p = {
+          id: s.nextProjectileId++, ownerId: unit.id, x: unit.x, y: unit.y,
+          dir: order.dir, speed: atk.speed, range: atk.range, traveled: 0,
+        };
+        s.projectiles.push(p);
+        events.push({ type: 'shot', step: stepNo, unitId: unit.id, projectileId: p.id, dir: p.dir, from: [p.x, p.y] });
+        if (this.fly(p, events, stepNo)) carried.push({ projectileId: p.id, carried: true });
+      } else if (atk.kind === AttackKind.MELEE) {
+        const cells = strikeCells(unit, order.dir, atk.reach).filter(([x, y]) => this.inBounds(x, y));
+        events.push({ type: 'strike', step: stepNo, unitId: unit.id, dir: order.dir, cells });
+        for (const [x, y] of cells) {
+          const victim = this.unitAt(x, y);
+          if (victim) this.kill(victim, { cause: 'melee', sourceId: unit.id, attackerId: unit.id }, events, stepNo);
         }
       }
     });
-    s.queue = [];
 
-    // 2. Sub-steps.
-    const L = [...s.units, ...s.projectiles].reduce((acc, e) => lcm(acc, e.speed), 1);
-    const startUnits = [...s.units];
-    const paths = new Map(s.units.map((u) => [u.id, [[u.x, u.y]]]));
-    const projPaths = new Map(s.projectiles.map((p) => [p.id, [[p.x, p.y]]]));
-    const firstBlock = new Map();
-    // Normally everything steps at 1/v, 2/v, ..., 1. A unit that used its
-    // quick move this tick takes its first step at t = 0 instead of 1/v:
-    // before any projectile moves, so it can step out of a shot's path.
-    const stepsAt = (e, j) => j > 0 && j % (L / e.speed) === 0;
-    const unitStepsAt = (u, j) => (quickIds.has(u.id)
-      ? j === 0 || (stepsAt(u, j) && j !== L / u.speed)
-      : stepsAt(u, j));
-
-    for (let j = quickIds.size > 0 ? 0 : 1; j <= L; j++) {
-      const time = fraction(j, L);
-
-      // a. Units.
-      const movedFrom = new Map(); // unit id -> cell it left this instant
-      const intents = s.units.map((u) => {
-        const next = unitStepsAt(u, j) ? nextStep(u, s) : { x: u.x, y: u.y };
-        return { id: u.id, x: u.x, y: u.y, tx: next.x, ty: next.y, priority: u.orderSeq };
-      });
-      if (intents.some((it) => it.tx !== it.x || it.ty !== it.y)) {
-        const outcome = resolveMoves(intents);
-        for (const u of s.units) {
-          const r = outcome.get(u.id);
-          if (r.moved) {
-            movedFrom.set(u.id, [u.x, u.y]);
-            u.x = r.x;
-            u.y = r.y;
-            paths.get(u.id).push([u.x, u.y]);
-          } else if (r.blocked && !firstBlock.has(u.id)) {
-            firstBlock.set(u.id, { at: [u.x, u.y], ...r.blocked, time });
-          }
-        }
-      }
-
-      // b. Projectiles.
-      const projFrom = new Map(); // projectile id -> cell it left this instant
-      for (const p of s.projectiles) {
-        if (!stepsAt(p, j)) continue;
-        projFrom.set(p.id, [p.x, p.y]);
-        [p.x, p.y] = step(p.x, p.y, p.dir);
-        p.traveled += 1;
-        if (this.inBounds(p.x, p.y) && !pastRange(p)) projPaths.get(p.id).push([p.x, p.y]);
-      }
-
-      // c. Hits (all decided for this instant before anything is removed).
-      const hits = []; // [projectile, victim]
-      for (const p of s.projectiles) {
-        if (!this.inBounds(p.x, p.y) || pastRange(p)) continue;
-        let victim = s.units.find((u) => u.x === p.x && u.y === p.y && !(p.traveled === 0 && u.id === p.ownerId));
-        const from = projFrom.get(p.id);
-        if (!victim && from) {
-          victim = s.units.find((u) => {
-            const uf = movedFrom.get(u.id);
-            return uf && uf[0] === p.x && uf[1] === p.y && u.x === from[0] && u.y === from[1];
-          });
-        }
-        if (victim) hits.push([p, victim]);
-      }
-      const killed = new Map(); // unit id -> [{ cause, sourceId, attackerId }]
-      const addKill = (victimId, hit) => {
-        if (!killed.has(victimId)) killed.set(victimId, []);
-        killed.get(victimId).push(hit);
-      };
-      for (const [p, victim] of hits) {
-        addKill(victim.id, { cause: 'projectile', sourceId: p.id, attackerId: p.ownerId });
-      }
-
-      // e. Melee strikes land at the end of the tick, simultaneously with
-      //    this instant's projectile hits (a striker shot at t=1 still strikes).
-      if (j === L) {
-        for (const t of strikes) {
-          const attacker = this.getUnit(t.unitId);
-          if (!attacker) continue; // killed earlier this tick
-          const cells = strikeCells(attacker, t.dir, getUnitType(attacker.type).attack.reach);
-          events.push({ type: 'strike', unitId: attacker.id, dir: t.dir, cells: cells.filter(([x, y]) => this.inBounds(x, y)) });
-          for (const [x, y] of cells) {
-            const victim = this.unitAt(x, y);
-            if (victim) addKill(victim.id, { cause: 'melee', sourceId: attacker.id, attackerId: attacker.id });
-          }
-        }
-      }
-
-      for (const [unitId, hitsOn] of [...killed].sort((a, b) => a[0] - b[0])) {
-        const u = this.getUnit(unitId);
-        const shots = hitsOn.filter((h) => h.cause === 'projectile');
-        events.push({
-          type: 'killed',
-          unitId,
-          team: u.team,
-          at: [u.x, u.y],
-          time,
-          hits: hitsOn,
-          // Shortcuts for projectile kills.
-          by: shots.map((h) => h.sourceId),
-          shooterId: shots[0]?.attackerId ?? null,
-        });
-      }
-      const spent = new Set(hits.map(([p]) => p.id));
-      s.units = s.units.filter((u) => !killed.has(u.id));
-
-      // d. Remove spent projectiles and ones that left the grid.
-      s.projectiles = s.projectiles.filter((p) => {
-        if (spent.has(p.id)) return false;
-        if (!this.inBounds(p.x, p.y) || pastRange(p)) {
-          events.push({ type: 'projectileExpired', projectileId: p.id, time });
-          return false;
-        }
-        return true;
-      });
-    }
-
-    // 3. Report and clear finished orders.
-    for (const [id, path] of projPaths) {
-      if (path.length > 1) events.push({ type: 'projectileMoved', projectileId: id, path });
-    }
-    for (const u of startUnits) {
-      const path = paths.get(u.id);
-      if (path.length > 1) {
-        events.push({ type: 'moved', unitId: u.id, from: path[0], to: path[path.length - 1], path });
-      }
-      const b = firstBlock.get(u.id);
-      if (b) {
-        events.push({ type: 'blocked', unitId: u.id, at: b.at, reason: b.reason, by: b.by, time: b.time });
-      }
-      if (!this.getUnit(u.id)) continue; // killed this tick
-      if (u.order?.type === OrderType.MOVE && u.x === u.order.x && u.y === u.order.y) {
-        events.push({ type: 'arrived', unitId: u.id, at: [u.x, u.y] });
-        u.order = null;
-        u.orderSeq = null;
-      }
-    }
-
+    s.queue = carried;
     s.tick += 1;
     return events;
+  }
+
+  /**
+   * Walk a unit up to its speed toward the order's target. Returns true if
+   * the order should carry over (not arrived, unit alive).
+   */
+  walk(unit, order, events, stepNo) {
+    const path = [[unit.x, unit.y]];
+    let alive = true;
+    for (let k = 0; k < unit.speed; k++) {
+      if (unit.x === order.x && unit.y === order.y) break;
+      const next = nextStep({ x: unit.x, y: unit.y, order }, this.state);
+      if (next.x === unit.x && next.y === unit.y) {
+        events.push({ type: 'blocked', step: stepNo, unitId: unit.id, at: [unit.x, unit.y], reason: 'no route', by: null });
+        break;
+      }
+      const occupant = this.unitAt(next.x, next.y);
+      if (occupant) {
+        events.push({ type: 'blocked', step: stepNo, unitId: unit.id, at: [unit.x, unit.y], reason: 'occupied', by: occupant.id });
+        break;
+      }
+      unit.x = next.x;
+      unit.y = next.y;
+      path.push([unit.x, unit.y]);
+      const p = this.projectileAt(unit.x, unit.y);
+      if (p) {
+        // Walked into a projectile in flight.
+        this.removeProjectile(p);
+        this.kill(unit, { cause: 'projectile', sourceId: p.id, attackerId: p.ownerId }, events, stepNo);
+        alive = false;
+        break;
+      }
+    }
+    if (path.length > 1) {
+      events.push({ type: 'moved', step: stepNo, unitId: unit.id, from: path[0], to: path[path.length - 1], path });
+    }
+    if (!alive) return false;
+    if (unit.x === order.x && unit.y === order.y) {
+      events.push({ type: 'arrived', step: stepNo, unitId: unit.id, at: [unit.x, unit.y] });
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Fly a projectile up to its speed. It hits the first unit it meets, and
+   * is gone if it leaves the board or passes its range. Returns true if it
+   * is still flying afterwards.
+   */
+  fly(p, events, stepNo) {
+    const path = [[p.x, p.y]];
+    let flying = true;
+    for (let k = 0; k < p.speed; k++) {
+      [p.x, p.y] = step(p.x, p.y, p.dir);
+      p.traveled += 1;
+      if (!this.inBounds(p.x, p.y) || (p.range !== null && p.traveled > p.range)) {
+        events.push({ type: 'projectileExpired', step: stepNo, projectileId: p.id });
+        this.removeProjectile(p);
+        flying = false;
+        break;
+      }
+      path.push([p.x, p.y]);
+      const victim = this.unitAt(p.x, p.y);
+      if (victim) {
+        this.removeProjectile(p);
+        this.kill(victim, { cause: 'projectile', sourceId: p.id, attackerId: p.ownerId }, events, stepNo);
+        flying = false;
+        break;
+      }
+    }
+    if (path.length > 1) events.push({ type: 'projectileMoved', step: stepNo, projectileId: p.id, path });
+    return flying;
+  }
+
+  removeProjectile(p) {
+    this.state.projectiles = this.state.projectiles.filter((q) => q.id !== p.id);
+  }
+
+  kill(unit, hit, events, stepNo) {
+    events.push({
+      type: 'killed', step: stepNo, unitId: unit.id, team: unit.team, at: [unit.x, unit.y], hits: [hit],
+      // Shortcuts for projectile kills.
+      by: hit.cause === 'projectile' ? [hit.sourceId] : [],
+      shooterId: hit.cause === 'projectile' ? hit.attackerId : null,
+    });
+    this.state.units = this.state.units.filter((u) => u.id !== unit.id);
   }
 
   /** Stable hash of the full state; equal states always hash equal. */
@@ -443,10 +399,6 @@ export class Game {
     return hashState(this.state);
   }
 }
-
-
-/** A projectile that has flown further than its range is spent. */
-const pastRange = (p) => p.range !== null && p.traveled > p.range;
 
 /** The `reach` cells in a row next to a unit in a direction. */
 export function strikeCells(unit, dir, reach) {
@@ -463,21 +415,6 @@ function validateSpeed(speed) {
   if (!Number.isInteger(speed) || speed < 1 || speed > MAX_SPEED) {
     throw new Error(`Speed must be an integer from 1 to ${MAX_SPEED}`);
   }
-}
-
-function gcd(a, b) {
-  while (b) [a, b] = [b, a % b];
-  return a;
-}
-
-/** j/L as a reduced fraction string, e.g. "1/2", or "1" for a whole tick. */
-function fraction(j, L) {
-  const g = gcd(j, L);
-  return L / g === 1 ? String(j / g) : `${j / g}/${L / g}`;
-}
-
-function lcm(a, b) {
-  return (a / gcd(a, b)) * b;
 }
 
 /**

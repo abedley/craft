@@ -14,9 +14,9 @@
 //   Paint mode   - pick a terrain type, then tap or drag across hexes to
 //                  paint it (water can't be painted under a unit).
 //
-// Turns: the CPU stages its orders as soon as a turn starts (they show up in
-// the queue first). The player then orders their own (blue) units and taps
-// "End turn", which runs one tick and starts the next turn. Editing the board
+// Turns: the CPU stages its orders as soon as a turn starts. The player then
+// orders their own (blue) units and taps "End turn", which runs the queue
+// front to back (the Queue tab shows that order) and starts the next turn. Editing the board
 // makes the CPU re-plan. "Back" restores the snapshot taken just before the
 // last "End turn", including both sides' staged orders (an exact undo).
 
@@ -309,7 +309,7 @@ export class DebugUI {
             this.selectedId = null;
             this.hint('Deselected.');
           } else if (unit && unit.team === Teams.CPU) {
-            this.hint(`Unit ${unit.id} is a CPU unit${unit.order ? ` (${fmtOrder(unit.order)})` : ''}.`);
+            this.hint(`Unit ${unit.id} is a CPU unit${this.game.orderFor(unit.id) ? ` (${fmtOrder(this.game.orderFor(unit.id))})` : ''}.`);
           } else if (unit && quick && !(unit.quickMoves > 0)) {
             this.hint(`Unit ${unit.id} has already used its quick move.`, true);
             return;
@@ -372,7 +372,7 @@ export class DebugUI {
       // Stop once nothing is left to do.
       const g = this.game;
       if (this.match.status !== MatchStatus.PLAYING) return this.stopAuto();
-      if (g.queue.length === 0 && g.projectiles.length === 0 && g.units.every((u) => !u.order)) {
+      if (g.queue.length === 0 && g.projectiles.length === 0) {
         this.stopAuto();
         this.hint('Auto stopped: nothing moving.');
         return;
@@ -462,7 +462,7 @@ export class DebugUI {
       case 'queue': {
         const el = $('#tab-queue');
         el.innerHTML = g.queue.length
-          ? g.queue.map((q, i) => `<div class="${teamClass(g.getUnit(q.unitId))}">${i + 1}. ${teamLabel(g.getUnit(q.unitId))} #${q.unitId} ${fmtOrder(q.order)}</div>`).join('')
+          ? g.queue.map((q, i) => fmtEntry(g, q, i)).join('')
           : '<div class="empty">Queue is empty. Orders run on the next tick.</div>';
         break;
       }
@@ -483,7 +483,7 @@ export class DebugUI {
         const el = $('#tab-units');
         const projLines = g.projectiles.map((p) => `<div class="shot">projectile ${p.id} @ ${p.x},${p.y} → ${p.dir} (from #${p.ownerId})</div>`).join('');
         el.innerHTML = projLines + (g.units.length
-          ? g.units.map((u) => `<div class="${teamClass(u)}">${teamLabel(u)} #${u.id} ${UnitTypes[u.type].name} @ ${u.x},${u.y} spd ${u.speed}${u.quickMoves > 0 ? ' ⚡' : ''} ${u.order ? fmtOrder(u.order) : '<span class="meta">idle</span>'}</div>`).join('')
+          ? g.units.map((u) => `<div class="${teamClass(u)}">${teamLabel(u)} #${u.id} ${UnitTypes[u.type].name} @ ${u.x},${u.y} spd ${u.speed}${u.quickMoves > 0 ? ' ⚡' : ''} ${g.orderFor(u.id) ? fmtOrder(g.orderFor(u.id)) : '<span class="meta">idle</span>'}</div>`).join('')
           : '<div class="empty">No units.</div>');
         break;
       }
@@ -494,6 +494,17 @@ export class DebugUI {
       }
     }
   }
+}
+
+/** One line of the Queue tab. */
+function fmtEntry(g, e, i) {
+  if (e.projectileId !== undefined) {
+    const p = g.getProjectile(e.projectileId);
+    return `<div class="shot">${i + 1}. projectile ${e.projectileId} keeps flying ${p ? p.dir : ''} (from #${p?.ownerId})</div>`;
+  }
+  const u = g.getUnit(e.unitId);
+  const tag = e.order.quick ? 'goes first' : e.carried ? 'continuing' : 'new';
+  return `<div class="${teamClass(u)}">${i + 1}. ${teamLabel(u)} #${e.unitId} ${fmtOrder(e.order)} <span class="meta">${tag}</span></div>`;
 }
 
 function teamLabel(u) {
@@ -534,17 +545,17 @@ function nearestDirection(renderer, u, x, y, allowed) {
 function fmtEvent(e) {
   switch (e.type) {
     case 'moved': return `<div class="moved">#${e.unitId} ${e.path.map((p) => p.join(',')).join(' → ')}</div>`;
-    case 'blocked': return `<div class="blocked">#${e.unitId} blocked at ${e.at} (${e.reason}${e.by != null ? ` by #${e.by}` : ''}${e.time ? ` @t=${e.time}` : ''})</div>`;
+    case 'blocked': return `<div class="blocked">#${e.unitId} blocked at ${e.at} (${e.reason}${e.by != null ? ` by #${e.by}` : ''})</div>`;
     case 'arrived': return `<div class="arrived">#${e.unitId} arrived at ${e.at}</div>`;
-    case 'orderApplied': return `<div class="meta">#${e.unitId} ← ${fmtOrder(e.order)}</div>`;
+    case 'orderStarted': return `<div class="meta">${e.step}. #${e.unitId} ${fmtOrder(e.order)}${e.carried ? ' (continued)' : ''}</div>`;
     case 'quickMove': return `<div class="quick">#${e.unitId} used its quick move (${e.remaining} left)</div>`;
     case 'shot': return `<div class="shot">#${e.unitId} fired projectile ${e.projectileId} ${e.dir} from ${e.from}</div>`;
     case 'projectileMoved': return `<div class="shot">projectile ${e.projectileId} ${e.path.map((p) => p.join(',')).join(' → ')}</div>`;
-    case 'projectileExpired': return `<div class="meta">projectile ${e.projectileId} left the grid @t=${e.time}</div>`;
+    case 'projectileExpired': return `<div class="meta">projectile ${e.projectileId} is gone (left the board or out of range)</div>`;
     case 'strike': return `<div class="shot">#${e.unitId} struck ${e.dir} at ${e.cells.map((c) => c.join(',')).join(' and ') || '(off the board)'}</div>`;
     case 'killed': {
       const how = e.hits.map((h) => (h.cause === 'melee' ? `strike of #${h.attackerId}` : `projectile ${h.sourceId} (#${h.attackerId})`)).join(' + ');
-      return `<div class="killed">${e.team === Teams.CPU ? 'CPU' : 'Your'} #${e.unitId} KILLED at ${e.at} by ${how} @t=${e.time}</div>`;
+      return `<div class="killed">${e.team === Teams.CPU ? 'CPU' : 'Your'} #${e.unitId} KILLED at ${e.at} by ${how}</div>`;
     }
     default: return `<div class="meta">${e.type} ${JSON.stringify(e)}</div>`;
   }

@@ -117,17 +117,18 @@ export class Renderer {
       }
     }
 
-    // Orders: the last queued order per unit overrides its active order.
-    const queued = new Map();
-    for (const q of game.queue) queued.set(q.unitId, q.order);
-    for (const u of game.units) {
-      const pending = queued.get(u.id);
-      const order = pending ?? u.order;
-      if (!order) continue;
+    // Orders, straight from the queue. Carried-over walks are faint; new
+    // orders are dashed in the team's colour (yellow for the player), quick
+    // moves cyan.
+    for (const entry of game.queue) {
+      if (entry.unitId === undefined) continue;
+      const u = game.getUnit(entry.unitId);
+      if (!u) continue;
+      const { order } = entry;
       if (order.type === 'move') {
-        const color = order.quick && pending ? COLORS.quick
-          : !pending ? COLORS.activeOrder : u.team === 'cpu' ? TEAM_COLORS.cpu : COLORS.queuedOrder;
-        this.drawOrderLine(u, order, color, !!pending);
+        const color = order.quick ? COLORS.quick
+          : entry.carried ? COLORS.activeOrder : u.team === 'cpu' ? TEAM_COLORS.cpu : COLORS.queuedOrder;
+        this.drawOrderLine(u, order, color, !entry.carried);
       } else if (order.type === 'attack') {
         const atk = UnitTypes[u.type].attack;
         if (atk.kind === AttackKind.PROJECTILE) this.drawShotLine(game, u, order.dir, atk.range);

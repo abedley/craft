@@ -58,7 +58,7 @@ test('units path around water, over the bridge, and never step onto it', () => {
   do {
     g.tick();
     path.push(pos(g, 1));
-  } while (g.getUnit(1).order && path.length < 20);
+  } while (g.orderFor(1) && path.length < 20);
   assert.deepEqual(pos(g, 1), [0, 4]);
   for (const [x, y] of path) assert.ok(g.isWalkable(x, y), `stepped on ${g.terrainAt(x, y)} at ${x},${y}`);
   assert.ok(path.some(([x, y]) => x === 4 && y === 2), 'crossed by the bridge');
