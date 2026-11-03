@@ -245,7 +245,7 @@ export class DebugUI {
     }
     this.hint({
       move: 'Tap a unit to select it, then tap a cell to queue a move.',
-      quick: 'Quick move (once per unit): goes to the front of the queue, ahead of the CPU.',
+      quick: 'Quick move (once per unit): steps first, before shots fly, and wins ties. Tap a unit, then a hex.',
       attack: 'Tap one of your units, then tap a cell or unit to attack toward it.',
       add: 'Tap an empty cell to add a unit.',
       remove: 'Tap a unit to remove it.',

@@ -206,7 +206,11 @@ export class Game {
    *    - move: becomes the unit's standing order. A quick move also uses up
    *      one of the unit's quick moves; it was queued at the front, so it
    *      gets the lowest order number and wins same-instant contests for as
-   *      long as the unit follows it.
+   *      long as the unit follows it. It also goes first in time: the unit's
+   *      first step this tick happens at t = 0 (an extra instant before
+   *      anything else moves) instead of at t = 1/speed. Same distance, just
+   *      sooner, so it can step out of the line of a shot that would land
+   *      this tick.
    *    - attack: the unit holds still this tick and any move order is
    *      cancelled. What happens depends on its type's attack kind:
    *        projectile: a projectile is fired from the unit's cell right away;
@@ -251,6 +255,7 @@ export class Game {
 
     // 1. Apply queued orders: last one per unit wins.
     const strikes = []; // melee attacks [{ unitId, dir }], landing at t = 1
+    const quickIds = new Set(); // units whose quick move was applied this tick
     const lastIndex = new Map();
     s.queue.forEach((q, i) => lastIndex.set(q.unitId, i));
     s.queue.forEach(({ unitId, order }, i) => {
@@ -285,6 +290,7 @@ export class Game {
         unit.order = order;
         unit.orderSeq = s.nextOrderSeq++;
         if (order.quick) {
+          quickIds.add(unit.id);
           unit.quickMoves -= 1;
           events.push({ type: 'quickMove', unitId: unit.id, to: [order.x, order.y], remaining: unit.quickMoves });
         }
@@ -298,15 +304,21 @@ export class Game {
     const paths = new Map(s.units.map((u) => [u.id, [[u.x, u.y]]]));
     const projPaths = new Map(s.projectiles.map((p) => [p.id, [[p.x, p.y]]]));
     const firstBlock = new Map();
-    const stepsAt = (e, j) => j % (L / e.speed) === 0;
+    // Normally everything steps at 1/v, 2/v, ..., 1. A unit that used its
+    // quick move this tick takes its first step at t = 0 instead of 1/v:
+    // before any projectile moves, so it can step out of a shot's path.
+    const stepsAt = (e, j) => j > 0 && j % (L / e.speed) === 0;
+    const unitStepsAt = (u, j) => (quickIds.has(u.id)
+      ? j === 0 || (stepsAt(u, j) && j !== L / u.speed)
+      : stepsAt(u, j));
 
-    for (let j = 1; j <= L; j++) {
+    for (let j = quickIds.size > 0 ? 0 : 1; j <= L; j++) {
       const time = fraction(j, L);
 
       // a. Units.
       const movedFrom = new Map(); // unit id -> cell it left this instant
       const intents = s.units.map((u) => {
-        const next = stepsAt(u, j) ? nextStep(u, s) : { x: u.x, y: u.y };
+        const next = unitStepsAt(u, j) ? nextStep(u, s) : { x: u.x, y: u.y };
         return { id: u.id, x: u.x, y: u.y, tx: next.x, ty: next.y, priority: u.orderSeq };
       });
       if (intents.some((it) => it.tx !== it.x || it.ty !== it.y)) {

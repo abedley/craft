@@ -46,7 +46,9 @@ test('a quick move wins a same-instant contest the CPU would otherwise win', () 
   const events = quick.m.endTurn();
   assert.deepEqual(pos(quick.g, 1), [quick.cell.x, quick.cell.y], 'player wins with a quick move');
   assert.deepEqual(pos(quick.g, 2), [1, 0]);
-  assert.ok(events.some((e) => e.type === 'blocked' && e.unitId === 2 && e.reason === 'contested' && e.by === 1));
+  // The quick step lands at t = 0, before the CPU unit steps at t = 1, so the
+  // hex is already occupied when it arrives.
+  assert.ok(events.some((e) => e.type === 'blocked' && e.unitId === 2 && e.reason === 'occupied' && e.by === 1));
 });
 
 test('the quick move is used up on tick, and only once', () => {
@@ -107,4 +109,64 @@ test('quick moves are move orders only, and survive a snapshot round-trip', () =
   assert.equal(copy.hash(), g.hash());
   copy.tick();
   assert.equal(copy.getUnit(1).quickMoves, 0);
+});
+
+// ---- Quick moves go first in time: dodging a shot -------------------------
+
+const kills = (events) => events.filter((e) => e.type === 'killed').map((e) => e.unitId);
+
+test('a quick move steps out of a shot that would land this turn, at every range 1-4', () => {
+  // CPU gunslinger at the top of column 1 shoots down; the player's unit is
+  // d hexes below (the shot reaches it at t = d/4, within this turn).
+  for (let d = 1; d <= 4; d++) {
+    const setup = () => {
+      const g = new Game({ width: 3, height: 7, units: [{ x: 1, y: 0, type: 'gunslinger', team: C }, { x: 1, y: d }] });
+      g.queueOrder(1, attack('down'));
+      return g;
+    };
+    const side = [0, d]; // up-left of an odd column: off the shot's line
+
+    // A normal move leaves at t = 1: too late at range 1-3. At range 4 the
+    // shot also arrives at t = 1, and moves at an instant resolve before
+    // hits, so a normal move just escapes there.
+    const plain = setup();
+    plain.queueOrder(2, move(...side));
+    assert.deepEqual(kills(plain.tick()), d < 4 ? [2] : [], `range ${d}: normal move`);
+
+    const quick = setup();
+    quick.queueOrder(2, quickMove(...side));
+    const events = quick.tick();
+    assert.deepEqual(kills(events), [], `range ${d}: the quick move dodges`);
+    assert.deepEqual(pos(quick, 2), side);
+    assert.ok(events.some((e) => e.type === 'moved' && e.unitId === 2));
+  }
+});
+
+test('the quick step happens at t = 0 and replaces the unit\'s first step (same distance)', () => {
+  const g = new Game({ width: 1, height: 8, units: [{ x: 0, y: 0 }, { x: 0, y: 7, speed: 2 }] });
+  g.queueOrder(1, quickMove(0, 5));
+  g.queueOrder(2, quickMove(0, 2));
+  const events = g.tick();
+  assert.deepEqual(events.find((e) => e.type === 'moved' && e.unitId === 1).path, [[0, 0], [0, 1]]);
+  assert.deepEqual(events.find((e) => e.type === 'moved' && e.unitId === 2).path, [[0, 7], [0, 6], [0, 5]]);
+  g.tick();
+  assert.deepEqual(pos(g, 1), [0, 2], 'then walks on at its normal speed');
+});
+
+test('a quick move into the shot\'s path is still hit, and stepping along the line only delays it', () => {
+  // Stepping further down the same column: the shot still catches it.
+  const g = new Game({ width: 3, height: 8, units: [{ x: 1, y: 0, type: 'gunslinger', team: C }, { x: 1, y: 2 }] });
+  g.queueOrder(1, attack('down'));
+  g.queueOrder(2, quickMove(1, 3));
+  assert.deepEqual(kills(g.tick()), [2]);
+});
+
+test('in a match: seeing the CPU\'s staged shot, a quick move saves the unit', () => {
+  const g = new Game({ width: 3, height: 7, units: [{ x: 1, y: 4 }, { x: 1, y: 0, type: 'gunslinger', team: C }] });
+  const m = new Match(g);
+  m.startTurn();
+  assert.deepEqual(g.queue[0], { unitId: 2, order: attack('down') }, 'the CPU plan is visible');
+  m.playerOrder(1, quickMove(2, 4)); // up-right of an odd column: off the line
+  m.endTurn();
+  assert.ok(g.getUnit(1), 'survived');
 });

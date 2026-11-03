@@ -55,10 +55,16 @@ Each turn (`src/match.js`):
 ### Quick move
 
 Each of the player's units has **one quick move per match** (`quickMove(x, y)`; CPU units have none).
-It's an ordinary move order except that it goes to the **very front of the order queue**, ahead
-of the CPU's staged orders. Being applied first, it counts as the earliest order given, so it wins
-same-moment ties for a hex, including ones the CPU would otherwise win. It keeps that priority for
-the rest of that walk.
+It's a move order that **goes first**, in two ways:
+
+- **In the queue:** it goes to the very front, ahead of the CPU's staged orders. Being applied
+  first, it counts as the earliest order given, and keeps that priority for the rest of the walk.
+- **In time:** the unit's first step that turn happens at **t = 0**, an extra instant before
+  anything else moves, instead of at its usual time (t = 1 for speed 1). It covers the same distance,
+  just sooner. That means **a quick move out of a shot's line saves the unit from a gunslinger shot
+  that would land this turn**. A normal move only leaves at t = 1, too late for a shot fired from 1–3
+  hexes away (a shot from 4 away arrives at t = 1 too, and a normal move just escapes it). Stepping
+  along the shot's line doesn't help; you have to step off it.
 
 - It's only used up when the turn runs. Replacing it with another order or clearing it first
   costs nothing.

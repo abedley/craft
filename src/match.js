@@ -8,8 +8,9 @@
 //   2. The player stages orders for their own units (playerOrder()). They
 //      can change them freely until the turn ends; the CPU's plan is fixed.
 //      Each player unit has one quick move per match: a move order that goes
-//      to the very front of the queue, ahead of the CPU, so it wins
-//      same-instant ties for a hex.
+//      to the very front of the queue, ahead of the CPU, and whose first step
+//      happens at the very start of the tick, before anything else moves.
+//      It wins ties for a hex and can dodge a shot that would land this turn.
 //   3. endTurn(): runs one engine tick, then starts the next turn.
 //
 // All match state lives in the Game state (the CPU's staged orders are just
