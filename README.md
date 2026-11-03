@@ -54,8 +54,8 @@ Each turn (`src/match.js`):
 ### Quick move
 
 Each of the player's units has **one quick move per match** (`quickMove(x, y)`; CPU units have none).
-It's a move order that goes to the **very front of the queue**, so it happens before anything else
-that turn, including the CPU's orders and shots still in flight. That's how it **saves a unit from a
+It's a move order that goes to the **very front of the queue** when you give it, so it happens
+before everything already queued, including the CPU's orders and shots still in flight. That's how it **saves a unit from a
 gunslinger shot that would land this turn**: the unit has stepped off the shot's line before the
 shot is fired. A normal move comes after the CPU's orders, too late. Stepping along the shot's
 line doesn't help; you have to step off it. If the walk isn't finished, it carries over to later
@@ -82,8 +82,8 @@ to the **front of the queue**. Each pikeman can charge **once per match**.
 - **Water or the board edge:** it stops there and still strikes ahead (strikes ignore terrain).
 - **A shot in flight in its path:** the pikeman is hit and never strikes.
 - It's a single queue entry; nothing carries over to the next turn.
-- **Front of the queue:** quick moves and charges share the front section, in the order they're
-  given. The CPU stages first, so a CPU charge leads that section.
+- **Front of the queue:** a charge is added to the very front. A fast order added after it (e.g.
+  your quick move, given after the CPU staged its charge) goes in front of it.
 - **Cost:** it's used up only when it runs; replacing or clearing it first costs nothing.
 - **Defined in the unit JSON:** `"charge": { "distance": 3, "uses": 1 }` on the pikeman. Any unit
   type can have one; the charge ends with that type's attack. `chargePlan(game, unit, dir)` previews
@@ -161,16 +161,20 @@ front to back, and **each entry happens in full before the next one starts**, on
 as the entries before it left it. There are no hidden phases or simultaneous moves: whatever is
 earlier in the queue happens first.
 
-**Queue order** each turn:
+**How the queue is built** each turn:
 
-1. **Quick moves and charges** (one-time "go first" moves; the CPU's charges first)
-2. **Carried over from last turn**: shots still in flight and walks not yet finished, in the order
-   they ran
-3. **The CPU's new orders** (it stages its plan first)
-4. **The player's new orders**
+1. **It starts empty.** Anything still going from last turn (shots in flight, walks not yet
+   finished) is added first, in the order it ran.
+2. **New orders join the end**, in the order they're given. The CPU stages its whole plan at the
+   start of the turn, so its orders go in before yours.
+3. **Fast orders go to the very front** instead: **quick moves** and **charges**. Each one added
+   goes in front of everything already there, so a fast order given later runs earlier.
+4. **Nothing reorders the queue.** A unit has at most one entry: giving it a new order removes its
+   old one (including a carried-over walk), and the new one goes to the end, or the front if fast.
+   No other entry moves. (A future ability could be allowed to change the order; none does yet.)
 
-A unit has at most one entry; giving it a new order replaces the old one, including a carried-over
-walk (the new order goes where new orders go).
+So in a match the CPU's fast orders are added at the start of the turn, and yours, added later, go
+in front of them.
 
 **What each entry does when its turn comes:**
 

@@ -11,11 +11,15 @@
 //   { projectileId }       a projectile still in flight from an earlier turn
 // An entry may also carry `carried: true` (left over from last turn).
 //
-// Where entries go (see queueOrder and match.js):
-//   1. quick moves and charges          (very front, in the order given)
-//   2. carried over from last turn      (in the order they ran last turn)
-//   3. the CPU's new orders             (it stages its plan first)
-//   4. the player's new orders
+// How the queue is built each turn (see queueOrder):
+//   - It starts empty. Things still going from last turn (projectiles in
+//     flight, unfinished walks) are added first, in the order they ran.
+//   - Every new order joins the END of the queue, in the order given. (In a
+//     match the CPU stages its plan at the start of the turn, so its orders
+//     are added before the player's; see match.js.)
+//   - "Fast" orders, quick moves and charges, are added to the FRONT instead.
+//   - Nothing ever reorders the queue. Giving a unit a new order removes its
+//     old entry (a unit has at most one); no other entry moves.
 //
 // What each entry does when its turn comes:
 //   move        The unit walks up to `speed` hexes along its route. It stops
@@ -213,10 +217,9 @@ export class Game {
    * Queue an order for a unit. A unit has at most one queue entry: a new
    * order replaces its old one (including one carried over from last turn).
    *
-   * Placement: quick moves and charges go to the very front (after any
-   * other quick moves and charges already there); any other order goes to
-   * the back. (match.js puts the CPU's plan
-   * ahead of the player's new orders.) A quick move or charge is only used up when it
+   * Placement: fast orders (quick moves and charges) go to the very front;
+   * any other order joins the end. Nothing else in the queue moves. A quick
+   * move or charge is only used up when it
    * runs, so replacing or clearing it first costs nothing.
    *
    * Throws if the order is invalid (wrong for the unit's type, a move onto
@@ -234,12 +237,8 @@ export class Game {
     if (order.type === OrderType.CHARGE && !(unit.charges > 0)) throw new Error(`Unit ${unitId} has no charge left`);
     const q = this.state.queue.filter((e) => e.unitId !== unitId);
     const entry = { unitId, order: structuredClone(order) };
-    if (goesToFront(order)) {
-      const firstOther = q.findIndex((e) => !goesToFront(e.order));
-      q.splice(firstOther === -1 ? q.length : firstOther, 0, entry);
-    } else {
-      q.push(entry);
-    }
+    if (goesToFront(order)) q.unshift(entry); // fast: to the very front
+    else q.push(entry); // everything else: to the end
     this.state.queue = q;
   }
 

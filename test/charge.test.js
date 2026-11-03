@@ -92,14 +92,14 @@ test('charging into a shot in flight is a hit', () => {
   assert.ok(!events.some((e) => e.type === 'strike'), 'no strike after dying');
 });
 
-test('a charge goes to the front of the queue, sharing it with quick moves in the order given', () => {
+test('a charge is added to the very front of the queue; a later fast order goes in front of it', () => {
   const g = new Game({ width: 6, height: 8, units: [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 3, y: 7 }] });
   g.queueOrder(2, move(5, 5));
   g.queueOrder(3, move(3, 5));
   g.queueOrder(1, charge('down'));
   assert.deepEqual(g.queue.map((e) => e.unitId), [1, 2, 3]);
-  g.queueOrder(3, quickMove(3, 6));
-  assert.deepEqual(g.queue.map((e) => e.unitId), [1, 3, 2]);
+  g.queueOrder(3, quickMove(3, 6)); // fast: to the front; unit 3's old entry is removed
+  assert.deepEqual(g.queue.map((e) => e.unitId), [3, 1, 2]);
 });
 
 test('replacing or clearing a queued charge does not use it up', () => {
@@ -155,12 +155,13 @@ test('the CPU charges when the closing strike would hit an enemy, never a teamma
   assert.equal(planTurn(far, C)[0][1].type, 'move');
 });
 
-test('in a match, the CPU\'s charge leads the front of the queue', () => {
+test('in a match: the CPU stages its charge first, so a quick move added later goes in front of it', () => {
   const g = col(8, [[7], [0, { team: C }], [5]]);
   const m = new Match(g);
   m.startTurn();
+  assert.deepEqual(g.queue.map((e) => [e.unitId, e.order.type]), [[2, 'charge']]);
   m.playerOrder(1, quickMove(0, 6));
-  assert.deepEqual(g.queue.map((e) => [e.unitId, e.order.type]), [[2, 'charge'], [1, 'move']]);
+  assert.deepEqual(g.queue.map((e) => [e.unitId, e.order.type]), [[1, 'move'], [2, 'charge']]);
 });
 
 test('charge definitions are validated', () => {

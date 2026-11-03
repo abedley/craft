@@ -25,17 +25,26 @@ test('friendly fire: a projectile kills a teammate in its line', () => {
   assert.ok(g.getUnit(3)); // the enemy behind was shielded
 });
 
-test('CPU stages its orders first, before any player order', () => {
+test('orders join the end in the order given; the CPU stages at the start of the turn', () => {
   const g = new Game({ width: 6, height: 6, units: [{ x: 0, y: 0 }, { x: 5, y: 5, team: C }] });
-  g.queueOrder(1, move(1, 0)); // e.g. scenario setup queued earlier
+  g.getUnit(2).charges = 0;
   const m = new Match(g);
-  m.startTurn();
-  assert.deepEqual(g.queue.map((q) => g.getUnit(q.unitId).team), [C, P]);
-  m.playerOrder(1, move(2, 0));
-  assert.equal(g.queue[0].unitId, 2);
+  m.startTurn(); // the queue starts empty; the CPU's plan goes in first
+  assert.deepEqual(g.queue.map((q) => g.getUnit(q.unitId).team), [C]);
+  m.playerOrder(1, move(2, 0)); // joins the end
+  assert.deepEqual(g.queue.map((q) => q.unitId), [2, 1]);
   // Staging again in the same turn doesn't add a second CPU plan.
   m.startTurn();
   assert.equal(g.queue.filter((q) => q.unitId === 2).length, 1);
+});
+
+test('nothing reorders the queue: an order queued before the CPU stages stays ahead of it', () => {
+  const g = new Game({ width: 6, height: 6, units: [{ x: 0, y: 0 }, { x: 5, y: 5, team: C }] });
+  g.getUnit(2).charges = 0;
+  g.queueOrder(1, move(1, 0)); // e.g. a scenario's pre-queued order
+  const m = new Match(g);
+  m.startTurn();
+  assert.deepEqual(g.queue.map((q) => g.getUnit(q.unitId).team), [P, C]);
 });
 
 test('player cannot order CPU units', () => {
