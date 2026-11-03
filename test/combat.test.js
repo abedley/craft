@@ -45,13 +45,12 @@ test('shots fly straight along diagonal hex lines too', () => {
   assert.deepEqual(pm.path, [[0, 0], [1, 0], [2, 1], [3, 1], [4, 2]]);
 });
 
-test('attacking replaces a carried-over walk: the shooter stays put', () => {
+test('attacking replaces a queued move: the shooter stays put', () => {
   const g = new Game({ width: 6, height: 6, units: [{ x: 0, y: 0, type: G }] });
-  g.queueOrder(1, move(0, 5));
+  g.queueOrder(1, move(0, 1));
+  g.queueOrder(1, attack('down-right'));
   g.tick();
-  g.queueOrder(1, attack('up-right'));
-  g.tick();
-  assert.deepEqual(pos(g, 1), [0, 1]);
+  assert.deepEqual(pos(g, 1), [0, 0]);
   assert.equal(g.orderFor(1), null);
 });
 

@@ -4,8 +4,8 @@
 // ends, the queue runs front to back and each entry happens in full before
 // the next. How it's built each turn:
 //
-//   - It starts empty; anything still going from last turn (projectiles in
-//     flight, unfinished walks) is added first, in the order it ran.
+//   - It starts empty; projectiles still in flight from last turn are added
+//     first, in the order they ran.
 //   - New orders join the end, in the order they're given. The CPU stages
 //     its whole plan at the start of the turn, so its orders go in before the
 //     player's.
@@ -13,9 +13,8 @@
 //   - Nothing reorders the queue afterwards.
 //
 // Each turn:
-//   1. startTurn(): the CPU looks at the board and stages its plan. A new
-//      order for a unit replaces that unit's carried-over walk. The plan is
-//      visible.
+//   1. startTurn(): the CPU looks at the board and stages its plan. The plan
+//      is visible.
 //   2. The player stages orders for their own units (playerOrder()).
 //   3. endTurn(): runs the queue (one engine tick), then starts the next turn.
 //
@@ -75,9 +74,9 @@ export class Match {
     this.game.queueOrder(unitId, order);
   }
 
-  /** Remove the player's new orders this turn (carried-over walks stay). */
+  /** Remove the player's orders this turn. */
   clearPlayerOrders() {
-    this.game.clearQueue(Teams.PLAYER, { newOnly: true });
+    this.game.clearQueue(Teams.PLAYER);
   }
 
   /** Resolve the turn (one tick), then let the CPU stage the next one. */

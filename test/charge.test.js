@@ -94,11 +94,11 @@ test('charging into a shot in flight is a hit', () => {
 
 test('a charge is added to the very front of the queue; a later fast order goes in front of it', () => {
   const g = new Game({ width: 6, height: 8, units: [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 3, y: 7 }] });
-  g.queueOrder(2, move(5, 5));
-  g.queueOrder(3, move(3, 5));
+  g.queueOrder(2, move(5, 1));
+  g.queueOrder(3, move(3, 6));
   g.queueOrder(1, charge('down'));
   assert.deepEqual(g.queue.map((e) => e.unitId), [1, 2, 3]);
-  g.queueOrder(3, quickMove(3, 6)); // fast: to the front; unit 3's old entry is removed
+  g.queueOrder(3, quickMove(4, 7)); // fast: to the front; unit 3's old entry is removed
   assert.deepEqual(g.queue.map((e) => e.unitId), [3, 1, 2]);
 });
 

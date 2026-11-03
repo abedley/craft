@@ -20,7 +20,7 @@
 // makes the CPU re-plan. "Back" restores the snapshot taken just before the
 // last "End turn", including both sides' staged orders (an exact undo).
 
-import { Game, Teams, MAX_SPEED, move, quickMove, charge, chargePlan, ALL_DIRECTIONS, attack, TerrainTypes, DEFAULT_TERRAIN, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
+import { Game, Teams, MAX_SPEED, move, quickMove, charge, chargePlan, distancesTo, ALL_DIRECTIONS, attack, TerrainTypes, DEFAULT_TERRAIN, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
 import { Match, MatchStatus } from '../match.js';
 import { Renderer } from './renderer.js';
 import { scenarios } from '../scenarios.js';
@@ -459,6 +459,18 @@ export class DebugUI {
 
   // ---- rendering ---------------------------------------------------------
 
+  /** Hexes the selected unit can move to this turn (Move / Quick modes), or null. */
+  reachable() {
+    if (this.mode !== 'move' && this.mode !== 'quick') return null;
+    const u = this.selectedId !== null ? this.game.getUnit(this.selectedId) : null;
+    if (!u) return null;
+    const cells = [];
+    for (const [k, d] of distancesTo(this.game, u.x, u.y)) {
+      if (d > 0 && d <= u.speed) cells.push(k.split(',').map(Number));
+    }
+    return cells;
+  }
+
   /** Run the next tick on a throwaway clone to show what will happen. */
   computePreview() {
     if (!$('#chk-preview').checked) return null;
@@ -492,7 +504,7 @@ export class DebugUI {
     const shownSpeed = selected ? selected.speed : this.newUnitSpeed;
     $('#speed').value = String(shownSpeed);
     document.querySelectorAll('[data-terrain]').forEach((b) => b.classList.toggle('active', b.dataset.terrain === this.paintTerrain));
-    this.renderer.draw(g, { selectedId: this.selectedId, preview: this.computePreview() });
+    this.renderer.draw(g, { selectedId: this.selectedId, preview: this.computePreview(), reach: this.reachable() });
     this.renderPanel();
   }
 
@@ -543,7 +555,7 @@ function fmtEntry(g, e, i) {
     return `<div class="shot">${i + 1}. projectile ${e.projectileId} keeps flying ${p ? p.dir : ''} (from #${p?.ownerId})</div>`;
   }
   const u = g.getUnit(e.unitId);
-  const tag = e.order.quick || e.order.type === 'charge' ? 'goes first' : e.carried ? 'continuing' : 'new';
+  const tag = e.order.quick || e.order.type === 'charge' ? 'goes first' : 'new';
   return `<div class="${teamClass(u)}">${i + 1}. ${teamLabel(u)} #${e.unitId} ${fmtOrder(e.order)} <span class="meta">${tag}</span></div>`;
 }
 

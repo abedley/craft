@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  Game, Teams, move, attack, nextStep, distancesTo, distance,
+  Game, Teams, move, attack, nextStep, distancesTo, distance, walkToward,
   TerrainTypes, DEFAULT_TERRAIN, defineTerrainType, registerTerrainTypes,
 } from '../src/engine/index.js';
 import { Match } from '../src/match.js';
@@ -52,13 +52,15 @@ test('units cannot be placed on, or ordered onto, water', () => {
 });
 
 test('units path around water, over the bridge, and never step onto it', () => {
+  // A front end walking a unit to a far hex: one move per turn, each as far
+  // along the route as the unit's speed allows (walkToward).
   const g = new Game({ width: 5, height: 5, terrain: RIVER, units: [{ x: 0, y: 0 }] });
-  g.queueOrder(1, move(0, 4));
   const path = [pos(g, 1)];
-  do {
+  while ((pos(g, 1)[0] !== 0 || pos(g, 1)[1] !== 4) && path.length < 20) {
+    g.queueOrder(1, move(...walkToward(g, g.getUnit(1), 0, 4)));
     g.tick();
     path.push(pos(g, 1));
-  } while (g.orderFor(1) && path.length < 20);
+  }
   assert.deepEqual(pos(g, 1), [0, 4]);
   for (const [x, y] of path) assert.ok(g.isWalkable(x, y), `stepped on ${g.terrainAt(x, y)} at ${x},${y}`);
   assert.ok(path.some(([x, y]) => x === 4 && y === 2), 'crossed by the bridge');
@@ -68,9 +70,8 @@ test('units path around water, over the bridge, and never step onto it', () => {
 
 test('with no route the unit stays put; open ground is unchanged (straight hex lines)', () => {
   const sealed = new Game({ width: 5, height: 5, terrain: RIVER.map((r) => r.replace('=', '~')), units: [{ x: 0, y: 0 }] });
-  sealed.queueOrder(1, move(0, 4));
-  sealed.tick();
-  assert.deepEqual(pos(sealed, 1), [0, 0]);
+  assert.throws(() => sealed.queueOrder(1, move(0, 4)), /no route/);
+  assert.deepEqual(walkToward(sealed, sealed.getUnit(1), 0, 4), [0, 0]);
 
   const open = new Game({ width: 8, height: 8 });
   for (const [ax, ay, bx, by] of [[0, 0, 3, 3], [7, 7, 0, 0], [0, 7, 7, 0]]) {

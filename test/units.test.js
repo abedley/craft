@@ -61,7 +61,8 @@ test('new JSON units work in the engine with no code changes', () => {
   const s = new Game({ width: 1, height: 6, units: [{ x: 0, y: 0, type: 'scout' }] });
   assert.equal(s.getUnit(1).speed, 3);
   assert.throws(() => s.queueOrder(1, attack('down')), /Scout units cannot attack/);
-  s.queueOrder(1, move(0, 5));
+  assert.throws(() => s.queueOrder(1, move(0, 4)), /up to 3 hexes/);
+  s.queueOrder(1, move(0, 3));
   s.tick();
   assert.equal(s.getUnit(1).y, 3);
 });
@@ -89,7 +90,8 @@ test('the CPU plays new JSON units from their definitions', () => {
   const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: 'archer', team: C }, { x: 2, y: 1 }] });
   assert.deepEqual(planTurn(g, C), [[1, attack('down-right')]]);
   // ...but not one beyond its range; it moves to a hex with an in-range shot instead.
-  const far = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: 'archer', team: C }, { x: 6, y: 3 }] });
+  // (Speed 6 so its chosen firing hex is within one turn's walk and shows up as the order.)
+  const far = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: 'archer', team: C, speed: 6 }, { x: 6, y: 3 }] });
   const [[, order]] = planTurn(far, C);
   assert.equal(order.type, 'move');
   const shots = ['down-right', 'up-left'].map((d) => firstInLine(far, order.x, order.y, d, 3));
@@ -101,7 +103,7 @@ test('the CPU plays new JSON units from their definitions', () => {
 
   // A unit with no attack just closes in.
   const sc = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: 'scout', team: C }, { x: 0, y: 7 }] });
-  assert.deepEqual(planTurn(sc, C), [[1, move(0, 7)]]);
+  assert.deepEqual(planTurn(sc, C), [[1, move(0, 3)]], 'as far as its speed (3) allows');
 });
 
 test('a match with JSON-only units runs to the end deterministically', () => {

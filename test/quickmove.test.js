@@ -17,11 +17,11 @@ test('each player unit starts with one quick move; CPU units have none', () => {
 
 test('a quick move goes to the front of the queue, ahead of the CPU\'s staged orders', () => {
   const g = new Game({ width: 6, height: 6, units: [{ x: 0, y: 0 }, { x: 5, y: 5, team: C }, { x: 2, y: 5 }] });
-  g.getUnit(2).charges = 0; // no CPU charge (that would lead the front section; see charge.test.js)
+  g.getUnit(2).charges = 0; // keep it simple: no CPU charge (see charge.test.js)
   const m = new Match(g);
   m.startTurn();
-  m.playerOrder(3, move(2, 3));
-  m.playerOrder(1, quickMove(0, 3));
+  m.playerOrder(3, move(2, 4));
+  m.playerOrder(1, quickMove(0, 1));
   assert.deepEqual(g.queue.map((q) => q.unitId), [1, 2, 3]);
   assert.equal(g.queue[0].order.quick, true);
 });
@@ -52,17 +52,13 @@ test('a quick move beats the CPU to a hex it would otherwise win', () => {
 
 test('the quick move is used up on tick, and only once', () => {
   const g = new Game({ width: 1, height: 6, units: [{ x: 0, y: 0 }] });
-  g.queueOrder(1, quickMove(0, 3));
+  g.queueOrder(1, quickMove(0, 1));
   assert.equal(g.getUnit(1).quickMoves, 1, 'not spent until the turn runs');
   const events = g.tick();
   assert.ok(events.some((e) => e.type === 'quickMove' && e.unitId === 1 && e.remaining === 0));
   assert.equal(g.getUnit(1).quickMoves, 0);
-  assert.throws(() => g.queueOrder(1, quickMove(0, 5)), /no quick move left/);
-  // It carries over as an ordinary walk from then on.
-  assert.deepEqual(g.queue, [{ unitId: 1, order: move(0, 3), carried: true }]);
-  g.tick();
-  g.tick();
-  assert.deepEqual(pos(g, 1), [0, 3]);
+  assert.deepEqual(g.queue, [], 'nothing carries over');
+  assert.throws(() => g.queueOrder(1, quickMove(0, 2)), /no quick move left/);
 });
 
 test('replacing or clearing a queued quick move does not use it up', () => {
@@ -70,33 +66,21 @@ test('replacing or clearing a queued quick move does not use it up', () => {
   g.getUnit(2).charges = 0; // keep the CPU pikeman from charging in (charge.test.js covers that)
   const m = new Match(g);
   m.startTurn();
-  m.playerOrder(1, quickMove(0, 2));
+  m.playerOrder(1, quickMove(0, 1));
   m.playerOrder(1, move(0, 1)); // replaces it
   assert.equal(g.queue.filter((q) => q.unitId === 1).length, 1);
   assert.ok(!g.queue.some((q) => q.order.quick));
-  m.playerOrder(1, quickMove(0, 2));
+  m.playerOrder(1, quickMove(0, 1));
   m.clearPlayerOrders();
   m.endTurn();
   assert.equal(g.getUnit(1).quickMoves, 1);
-});
-
-test('an unfinished quick move carries over ahead of the CPU\'s new orders', () => {
-  const g = new Game({ width: 1, height: 8, units: [{ x: 0, y: 0 }, { x: 0, y: 7, team: C }] });
-  g.getUnit(2).charges = 0;
-  const m = new Match(g);
-  m.startTurn();
-  m.playerOrder(1, quickMove(0, 3));
-  m.endTurn();
-  assert.equal(g.queue[0].unitId, 1);
-  assert.equal(g.queue[0].carried, true);
-  assert.ok(!g.queue[0].order.quick, 'no longer quick, just an early walk');
 });
 
 test('quick moves stay in front when the CPU re-plans', () => {
   const g = new Game({ width: 6, height: 6, units: [{ x: 0, y: 0 }, { x: 5, y: 5, team: C }] });
   const m = new Match(g);
   m.startTurn();
-  m.playerOrder(1, quickMove(0, 3));
+  m.playerOrder(1, quickMove(0, 1));
   g.clearQueue(C); // e.g. the board was edited
   m.startTurn();
   assert.deepEqual(g.queue.map((q) => q.unitId), [1, 2]);
@@ -105,7 +89,7 @@ test('quick moves stay in front when the CPU re-plans', () => {
 test('quick moves are move orders only, and survive a snapshot round-trip', () => {
   const g = new Game({ width: 3, height: 3, units: [{ x: 0, y: 0, type: 'gunslinger' }] });
   assert.throws(() => g.queueOrder(1, { ...attack('down'), quick: true }), /Invalid order/);
-  g.queueOrder(1, quickMove(0, 2));
+  g.queueOrder(1, quickMove(0, 1));
   const copy = Game.fromSnapshot(JSON.parse(JSON.stringify(g.snapshot())));
   assert.equal(copy.hash(), g.hash());
   copy.tick();
@@ -151,15 +135,14 @@ test('a quick move also gets out of the way of a shot already in flight', () => 
   assert.deepEqual(kills(g.tick()), []);
 });
 
-test('a quick move is a normal move otherwise: same distance as the unit\'s speed', () => {
+test('a quick move goes as far as a normal move: up to the unit\'s speed', () => {
   const g = new Game({ width: 1, height: 8, units: [{ x: 0, y: 0 }, { x: 0, y: 7, speed: 2 }] });
-  g.queueOrder(1, quickMove(0, 5));
-  g.queueOrder(2, quickMove(0, 2));
+  assert.throws(() => g.queueOrder(1, quickMove(0, 2)), /too far/);
+  g.queueOrder(1, quickMove(0, 1));
+  g.queueOrder(2, quickMove(0, 5));
   const events = g.tick();
   assert.deepEqual(events.find((e) => e.type === 'moved' && e.unitId === 1).path, [[0, 0], [0, 1]]);
   assert.deepEqual(events.find((e) => e.type === 'moved' && e.unitId === 2).path, [[0, 7], [0, 6], [0, 5]]);
-  g.tick();
-  assert.deepEqual(pos(g, 1), [0, 2], 'then walks on at its normal speed');
 });
 
 test('a quick move along the shot\'s line doesn\'t help', () => {

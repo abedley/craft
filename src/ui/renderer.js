@@ -19,7 +19,6 @@ function boardExtent(game) {
 const COLORS = {
   grid: '#2b323c',
   selected: '#ffffff',
-  activeOrder: 'rgba(255,255,255,0.35)',
   queuedOrder: '#ffd166',
   preview: '#5fd38d',
   blocked: '#ff6b6b',
@@ -98,7 +97,7 @@ export class Renderer {
    * @param {import('../engine/game.js').Game} game
    * @param {{selectedId:number|null, preview:null|{moved:Map,blocked:Map,projectiles:Array,killed:Set}}} view
    */
-  draw(game, { selectedId = null, preview = null } = {}) {
+  draw(game, { selectedId = null, preview = null, reach = null } = {}) {
     const { ctx, cell } = this;
     this.layout(game);
     ctx.clearRect(0, 0, this.cssW, this.cssH);
@@ -118,9 +117,23 @@ export class Renderer {
       }
     }
 
-    // Orders, straight from the queue. Carried-over walks are faint; new
-    // orders are dashed in the team's colour (yellow for the player), quick
-    // moves cyan.
+    // Hexes the selected unit can move to this turn.
+    if (reach) {
+      ctx.save();
+      for (const [x, y] of reach) {
+        const [cx, cy] = this.center(x, y);
+        this.hexPath(cx, cy, this.size - 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.10)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // Orders, straight from the queue: dashed in the team's colour (yellow
+    // for the player), quick moves cyan.
     for (const entry of game.queue) {
       if (entry.unitId === undefined) continue;
       const u = game.getUnit(entry.unitId);
@@ -128,8 +141,8 @@ export class Renderer {
       const { order } = entry;
       if (order.type === 'move') {
         const color = order.quick ? COLORS.quick
-          : entry.carried ? COLORS.activeOrder : u.team === 'cpu' ? TEAM_COLORS.cpu : COLORS.queuedOrder;
-        this.drawOrderLine(u, order, color, !entry.carried);
+          : u.team === 'cpu' ? TEAM_COLORS.cpu : COLORS.queuedOrder;
+        this.drawOrderLine(u, order, color, true);
       } else if (order.type === 'charge') {
         this.drawCharge(game, u, order.dir);
       } else if (order.type === 'attack') {

@@ -58,8 +58,8 @@ It's a move order that goes to the **very front of the queue** when you give it,
 before everything already queued, including the CPU's orders and shots still in flight. That's how it **saves a unit from a
 gunslinger shot that would land this turn**: the unit has stepped off the shot's line before the
 shot is fired. A normal move comes after the CPU's orders, too late. Stepping along the shot's
-line doesn't help; you have to step off it. If the walk isn't finished, it carries over to later
-turns as an ordinary walk.
+line doesn't help; you have to step off it. It goes as far as a normal move: up to the unit's
+speed.
 
 - It's only used up when the turn runs. Replacing it with another order or clearing it first
   costs nothing.
@@ -104,8 +104,11 @@ Deterministic: same board, same plan. For each CPU unit in id order:
    - Melee units strike in the allowed direction that catches the most enemies, as the board stands
      now. They never strike when a teammate stands in the strike, or is planned (earlier in the CPU's own plan)
      to step into it.
-3. **Move**: projectile units head for the nearest free cell with a clear, in-range shot at an enemy;
-   everyone else walks toward the nearest enemy.
+3. **Charge** (melee units with charges left): if a straight-line charge would end in a strike on
+   enemies and no teammates, charge in the direction that hits the most.
+4. **Move**: projectile units head for the nearest free cell with a clear, in-range shot at an enemy;
+   everyone else heads for the nearest enemy. Moves are one turn's walk, so the order is for the
+   furthest hex toward that destination it can reach this turn; it re-plans next turn.
 
 All of this reads from the unit definitions, so JSON-only units are played sensibly too.
 
@@ -142,10 +145,10 @@ Every hex has a terrain type, defined in **`src/data/terrain.json`** (validated 
 (water).** Placing a unit there or ordering a move onto it is rejected. Projectiles and melee strikes
 ignore terrain: you can shoot across a river.
 
-- **Pathfinding:** units walk the shortest route around unwalkable hexes. Among equally short routes
-  they prefer the straight hex line, so in open ground they walk straight. Other units are not
-  avoided: a unit stops when its next hex is occupied (see *The queue*). With no route at all, a unit
-  stays put.
+- **Pathfinding:** units walk the shortest route around unwalkable hexes, and a move's reach (the
+  unit's speed) is measured along that route. Among equally short routes they prefer the straight
+  hex line, so in open ground they walk straight. Other units are not avoided: a unit stops when its
+  next hex is occupied (see *The queue*). A move to a hex with no route is rejected.
 - **Maps:** pass `terrain` to `new Game` as one string per row, one `char` per hex, e.g.
   `'~=~~~~=~'`. Omit it for all-default. `game.terrainAt(x, y)`, `game.isWalkable(x, y)` and
   `game.setTerrain(x, y, type)` read and edit it (you can't make an occupied hex unwalkable).
@@ -163,14 +166,14 @@ earlier in the queue happens first.
 
 **How the queue is built** each turn:
 
-1. **It starts empty.** Anything still going from last turn (shots in flight, walks not yet
-   finished) is added first, in the order it ran.
+1. **It starts empty.** Shots still in flight from last turn are added first, in the order they
+   ran. (They're the only thing that continues from one turn to the next.)
 2. **New orders join the end**, in the order they're given. The CPU stages its whole plan at the
    start of the turn, so its orders go in before yours.
 3. **Fast orders go to the very front** instead: **quick moves** and **charges**. Each one added
    goes in front of everything already there, so a fast order given later runs earlier.
 4. **Nothing reorders the queue.** A unit has at most one entry: giving it a new order removes its
-   old one (including a carried-over walk), and the new one goes to the end, or the front if fast.
+   old one, and the new one goes to the end, or the front if fast.
    No other entry moves. (A future ability could be allowed to change the order; none does yet.)
 
 So in a match the CPU's fast orders are added at the start of the turn, and yours, added later, go
@@ -178,9 +181,13 @@ in front of them.
 
 **What each entry does when its turn comes:**
 
-- **Move** (`move(x, y)`): the unit walks up to its `speed` in hexes along a shortest walkable route
-  (straight hex line where possible; see *Terrain*). If the next hex is occupied, it stops there:
-  whoever is in the hex got there first. If it hasn't arrived, the order carries over to next turn.
+- **Move** (`move(x, y)`): **one turn's walk.** The target must be within the unit's `speed` in
+  hexes (walking distance around terrain); a further target is rejected when the order is given.
+  The unit walks there along a shortest walkable route (straight hex line where possible; see
+  *Terrain*). If the next hex is occupied, it stops there: whoever is in the hex got there first.
+  Either way the move is over; nothing carries over to the next turn. Walking somewhere further
+  takes one move per turn: that's for a front end to manage (`walkToward(game, unit, x, y)` gives
+  the furthest hex on the way that the unit can reach this turn).
 - **Attack** (`attack(dir)`): see *Combat*. The unit doesn't move that turn.
 - **Projectile in flight**: flies another `speed` hexes (see *Combat*).
 
@@ -190,8 +197,8 @@ first in the queue; a fast unit gains distance, not priority.
 
 Events from `tick()` (`orderStarted`, `moved` with the full `path`, `blocked`, `arrived`, `shot`,
 `projectileMoved`, `strike`, `killed`, `projectileExpired`, `quickMove`) all carry `step`, the
-queue position that caused them. `game.orderFor(id)` returns a unit's queued order; carried-over
-entries are marked `carried: true`.
+queue position that caused them. `game.orderFor(id)` returns a unit's queued order; projectiles
+carried over from last turn are marked `carried: true`.
 
 Other basics: the world is a `width x height` hex grid; each hex holds at most one unit. Every unit
 has a **type** that defines its speed and attack; ordering a unit to do something its type can't do
@@ -290,7 +297,8 @@ UI header, so two runs with the same orders can be compared at a glance.
 - Starts on **Skirmish vs CPU** (a river with two bridges; **Open field vs CPU** has no terrain). CPU orders are already staged when your turn starts (pink dashed
   lines, listed first in the Queue tab); tap **End turn** when your orders are in. The header shows
   YOU WIN / YOU LOSE / DRAW when a side is wiped out.
-- **Move** mode: tap one of your units to select it, tap an empty cell to queue `move(x, y)`.
+- **Move** mode: tap one of your units to select it (the hexes it can reach this turn light up),
+  then tap one of them to queue `move(x, y)`.
 - **Paint** mode: pick a terrain type and tap or drag across hexes to paint it. The CPU re-plans
   afterwards.
 - **Charge** mode: tap one of your pikemen, then tap toward where it should charge (any hex or unit;

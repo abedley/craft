@@ -8,25 +8,46 @@ const pos = (g, id) => [g.getUnit(id).x, g.getUnit(id).y];
 const col = (height, units) => new Game({ width: 1, height, units: units.map(([y, extra = {}]) => ({ x: 0, y, ...extra })) });
 const blocked = (events) => events.filter((e) => e.type === 'blocked').map((e) => [e.unitId, e.reason, e.by]);
 
-test('a move walks up to `speed` hexes per turn, then carries over until it arrives', () => {
-  const g = new Game({ width: 5, height: 5, units: [{ x: 0, y: 0 }] });
-  g.queueOrder(1, move(3, 3)); // 5 hexes away, speed 1
-  const path = [];
-  let events;
-  for (let i = 0; i < 5; i++) {
-    events = g.tick();
-    path.push(pos(g, 1));
-    if (i < 4) assert.deepEqual(g.queue, [{ unitId: 1, order: move(3, 3), carried: true }]);
-  }
-  assert.deepEqual(path, [[1, 0], [1, 1], [2, 2], [2, 3], [3, 3]]);
+test('a move is one turn\'s walk: up to `speed` hexes, and nothing carries over', () => {
+  const g = new Game({ width: 5, height: 5, units: [{ x: 0, y: 0 }, { x: 4, y: 4, speed: 2 }] });
+  g.queueOrder(1, move(1, 0));
+  g.queueOrder(2, move(3, 3)); // 2 hexes for a speed-2 unit
+  const events = g.tick();
+  assert.deepEqual([pos(g, 1), pos(g, 2)], [[1, 0], [3, 3]]);
+  assert.equal(events.filter((e) => e.type === 'arrived').length, 2);
+  assert.deepEqual(g.queue, [], 'the queue is empty again');
+});
+
+test('a move further than the unit\'s speed is rejected when given', () => {
+  const g = new Game({ width: 5, height: 5, units: [{ x: 0, y: 0 }, { x: 4, y: 4, speed: 2 }] });
+  assert.throws(() => g.queueOrder(1, move(2, 1)), /too far\. Unit 1 can move up to 1 hex this turn \(2,1 is 2 away\)/);
+  assert.throws(() => g.queueOrder(2, move(4, 1)), /up to 2 hexes/);
+  assert.doesNotThrow(() => g.queueOrder(2, move(4, 2)));
+});
+
+test('reach is walking distance: around water, not through it', () => {
+  // (0,0) to (0,2) is 2 hexes straight down, but (0,1) is water: the walk
+  // round it takes 3.
+  const g = new Game({ width: 3, height: 3, terrain: ['...', '~..', '...'], units: [{ x: 0, y: 0, speed: 2 }] });
+  assert.throws(() => g.queueOrder(1, move(0, 2)), /too far/);
+  g.setSpeed(1, 3);
+  assert.doesNotThrow(() => g.queueOrder(1, move(0, 2)));
+});
+
+test('a blocked move just stops; it doesn\'t continue next turn', () => {
+  const g = col(5, [[0, { speed: 3 }], [2]]);
+  g.queueOrder(1, move(0, 3));
+  g.tick();
+  assert.deepEqual(pos(g, 1), [0, 1]);
   assert.deepEqual(g.queue, []);
-  assert.ok(events.some((e) => e.type === 'arrived' && e.unitId === 1));
+  g.tick();
+  assert.deepEqual(pos(g, 1), [0, 1]);
 });
 
 test('orders do nothing until the turn runs; a new order replaces the unit\'s old one', () => {
   const g = col(5, [[2]]);
-  g.queueOrder(1, move(0, 0));
-  g.queueOrder(1, move(0, 4));
+  g.queueOrder(1, move(0, 1));
+  g.queueOrder(1, move(0, 3));
   assert.equal(g.queue.length, 1);
   assert.deepEqual(pos(g, 1), [0, 2]);
   g.tick();
@@ -63,12 +84,12 @@ test('two units swapping places: neither can move', () => {
 
 test('a line moves together only if the front unit goes first', () => {
   const frontFirst = col(6, [[0], [1], [2]]);
-  for (const id of [3, 2, 1]) frontFirst.queueOrder(id, move(0, 5));
+  for (const id of [3, 2, 1]) frontFirst.queueOrder(id, move(0, pos(frontFirst, id)[1] + 1));
   frontFirst.tick();
   assert.deepEqual([1, 2, 3].map((id) => pos(frontFirst, id)[1]), [1, 2, 3]);
 
   const backFirst = col(6, [[0], [1], [2]]);
-  for (const id of [1, 2, 3]) backFirst.queueOrder(id, move(0, 5));
+  for (const id of [1, 2, 3]) backFirst.queueOrder(id, move(0, pos(backFirst, id)[1] + 1));
   const events = backFirst.tick();
   assert.deepEqual([1, 2, 3].map((id) => pos(backFirst, id)[1]), [0, 1, 3]);
   assert.deepEqual(blocked(events), [[1, 'occupied', 2], [2, 'occupied', 3]]);
@@ -76,9 +97,10 @@ test('a line moves together only if the front unit goes first', () => {
 
 test('speed: a fast unit covers several hexes in its entry and stops early when blocked', () => {
   const g = col(8, [[0, { speed: 3 }], [5]]);
-  g.queueOrder(1, move(0, 7));
+  g.queueOrder(1, move(0, 3));
   g.tick();
   assert.deepEqual(pos(g, 1), [0, 3]);
+  g.queueOrder(1, move(0, 6));
   const events = g.tick();
   assert.deepEqual(pos(g, 1), [0, 4], 'stopped next to the unit at (0,5)');
   assert.deepEqual(blocked(events), [[1, 'occupied', 2]]);
@@ -94,19 +116,20 @@ test('speed does not buy priority: the queue does', () => {
   assert.deepEqual(pos(g, 1), [0, 2]);
 });
 
-test('carried-over entries come first next turn, in the order they ran', () => {
-  const g = col(10, [[0], [9]]);
-  g.queueOrder(2, move(0, 5));
-  g.queueOrder(1, move(0, 3));
-  g.tick();
-  assert.deepEqual(g.queue.map((e) => [e.unitId, e.carried]), [[2, true], [1, true]]);
-  g.queueOrder(2, move(0, 9)); // a new order replaces unit 2's carried walk and goes to the back
-  assert.deepEqual(g.queue.map((e) => e.unitId), [1, 2]);
+test('next turn\'s queue starts with only the projectiles still in flight', () => {
+  const g = col(12, [[0, { type: 'gunslinger' }], [11, { type: 'gunslinger' }], [5]]);
+  g.queueOrder(2, attack('up'));
+  g.queueOrder(1, attack('down'));
+  g.queueOrder(3, move(0, 6));
+  g.tick(); // both shots are still flying (4 hexes each, nothing hit)
+  assert.deepEqual(g.queue, [{ projectileId: 1, carried: true }, { projectileId: 2, carried: true }]);
+  g.queueOrder(3, move(0, 7)); // new orders join the end
+  assert.deepEqual(g.queue.map((e) => e.unitId ?? `p${e.projectileId}`), ['p1', 'p2', 3]);
 });
 
 test('events say which queue step caused them', () => {
   const g = col(6, [[0, { type: 'gunslinger' }], [3]]);
-  g.queueOrder(2, move(0, 5));
+  g.queueOrder(2, move(0, 4));
   g.queueOrder(1, attack('down'));
   const events = g.tick();
   assert.deepEqual(events.filter((e) => e.type === 'moved' || e.type === 'shot').map((e) => [e.type, e.step]), [['moved', 1], ['shot', 2]]);
@@ -124,14 +147,16 @@ test('replaying the same orders gives the same state; snapshots round-trip', () 
       width: 6, height: 6,
       units: [{ x: 0, y: 0 }, { x: 5, y: 5, speed: 2 }, { x: 0, y: 5, type: 'gunslinger' }, { x: 5, y: 0 }],
     });
-    g.queueOrder(1, move(5, 5));
-    g.queueOrder(2, move(0, 0));
+    g.queueOrder(1, move(1, 0));
+    g.queueOrder(2, move(4, 4));
     g.queueOrder(3, attack('up-right'));
-    g.queueOrder(4, move(0, 5));
+    g.queueOrder(4, move(4, 0));
     g.tick();
     const mid = Game.fromSnapshot(JSON.parse(JSON.stringify(g.snapshot())));
     assert.equal(mid.hash(), g.hash());
-    for (let i = 0; i < 6; i++) mid.tick();
+    mid.queueOrder(1, move(1, 1));
+    mid.queueOrder(2, move(3, 3));
+    for (let i = 0; i < 3; i++) mid.tick();
     return mid.hash();
   };
   assert.equal(run(), run());

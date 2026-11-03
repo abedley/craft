@@ -58,10 +58,12 @@ export const scenarios = {
   'Sandbox': () => board([{ x: 1, y: 1 }, { x: 6, y: 1 }, { x: 1, y: 6 }, { x: 6, y: 6 }, { x: 3, y: 3 }]),
 
   'Terrain: walk around a lake': () => {
-    // Units path around water; Preview shows the route bending round the lake.
-    const g = board([{ x: 3, y: 0 }, { x: 4, y: 7, type: GS }], LAKE_MAP);
-    g.queueOrder(1, move(3, 7));
-    g.queueOrder(2, attack('up')); // shots fly over water
+    // (6,4) is 2 hexes away in a straight line, but that line crosses the
+    // lake: on foot it's 3, and the unit (speed 3) walks round. Preview shows
+    // the route. Shots fly over water.
+    const g = board([{ x: 4, y: 5, speed: 3 }, { x: 4, y: 7, type: GS }], LAKE_MAP);
+    g.queueOrder(1, move(6, 4));
+    g.queueOrder(2, attack('up'));
     return g;
   },
 
@@ -78,15 +80,15 @@ export const scenarios = {
     // Each wants the other's hex; whichever goes first finds it occupied, and
     // so does the other.
     const g = board([{ x: 3, y: 3 }, { x: 3, y: 4 }]);
-    g.queueOrder(1, move(3, 7));
-    g.queueOrder(2, move(3, 0));
+    g.queueOrder(1, move(3, 4));
+    g.queueOrder(2, move(3, 3));
     return g;
   },
 
   'Queue: line, front first': () => {
     // The front unit is first in the queue, so each one frees the hex for the next.
     const g = board([{ x: 3, y: 1 }, { x: 3, y: 2 }, { x: 3, y: 3 }]);
-    for (const id of [3, 2, 1]) g.queueOrder(id, move(3, 7));
+    for (const id of [3, 2, 1]) g.queueOrder(id, move(3, id + 1));
     return g;
   },
 
@@ -94,24 +96,25 @@ export const scenarios = {
     // The back unit goes first and walks into the one ahead: blocked. Only
     // the front unit moves this turn.
     const g = board([{ x: 3, y: 1 }, { x: 3, y: 2 }, { x: 3, y: 3 }]);
-    for (const id of [1, 2, 3]) g.queueOrder(id, move(3, 7));
+    for (const id of [1, 2, 3]) g.queueOrder(id, move(3, id + 1));
     return g;
   },
 
   'Queue: fast unit stuck behind slow': () => {
     // Speed 3 doesn't help if you're queued behind the unit in your way.
     const g = board([{ x: 3, y: 0, speed: 3 }, { x: 3, y: 1 }]);
-    g.queueOrder(1, move(3, 7));
-    g.queueOrder(2, move(3, 7));
+    g.queueOrder(1, move(3, 3));
+    g.queueOrder(2, move(3, 2));
     return g;
   },
 
   'Mixed speeds': () => {
+    // Each unit moves as far as its speed allows (3, 2, 1, 4 hexes).
     const g = board([{ x: 0, y: 0, speed: 3 }, { x: 7, y: 0, speed: 2 }, { x: 0, y: 7 }, { x: 7, y: 7, speed: 4 }]);
-    g.queueOrder(1, move(7, 7));
-    g.queueOrder(2, move(0, 7));
-    g.queueOrder(3, move(7, 0));
-    g.queueOrder(4, move(0, 0));
+    g.queueOrder(1, move(2, 1));
+    g.queueOrder(2, move(6, 1));
+    g.queueOrder(3, move(1, 6));
+    g.queueOrder(4, move(4, 5));
     return g;
   },
 
@@ -154,7 +157,7 @@ export const scenarios = {
     ]);
     g.queueOrder(1, attack('down'));
     g.queueOrder(4, attack('down'));
-    g.queueOrder(6, move(6, 1));
+    g.queueOrder(6, move(6, 2)); // next to gunslinger 4, after its shot
     return g;
   },
 
@@ -186,11 +189,12 @@ export const scenarios = {
   },
 
   'Crossroads': () => {
-    const g = board([{ x: 0, y: 3 }, { x: 7, y: 4 }, { x: 3, y: 0 }, { x: 4, y: 7 }]);
-    g.queueOrder(1, move(7, 3));
-    g.queueOrder(2, move(0, 4));
-    g.queueOrder(3, move(3, 7));
-    g.queueOrder(4, move(4, 0));
+    // Four units step toward the middle; two want the same hex: first in the queue gets it.
+    const g = board([{ x: 2, y: 3 }, { x: 4, y: 4 }, { x: 3, y: 2 }, { x: 3, y: 5 }]);
+    g.queueOrder(1, move(3, 3));
+    g.queueOrder(2, move(3, 4));
+    g.queueOrder(3, move(3, 3));
+    g.queueOrder(4, move(3, 4));
     return g;
   },
 };

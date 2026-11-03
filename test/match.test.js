@@ -31,7 +31,7 @@ test('orders join the end in the order given; the CPU stages at the start of the
   const m = new Match(g);
   m.startTurn(); // the queue starts empty; the CPU's plan goes in first
   assert.deepEqual(g.queue.map((q) => g.getUnit(q.unitId).team), [C]);
-  m.playerOrder(1, move(2, 0)); // joins the end
+  m.playerOrder(1, move(1, 0)); // joins the end
   assert.deepEqual(g.queue.map((q) => q.unitId), [2, 1]);
   // Staging again in the same turn doesn't add a second CPU plan.
   m.startTurn();
@@ -57,7 +57,7 @@ test('clearing player orders keeps the CPU plan', () => {
   const g = new Game({ width: 6, height: 6, units: [{ x: 0, y: 0 }, { x: 5, y: 5, team: C }] });
   const m = new Match(g);
   m.startTurn();
-  m.playerOrder(1, move(3, 0));
+  m.playerOrder(1, move(1, 0));
   m.clearPlayerOrders();
   assert.deepEqual(g.queue.map((q) => q.unitId), [2]);
 });
@@ -90,15 +90,17 @@ test('CPU gunslinger shoots an enemy in line, but not through a teammate', () =>
 
 test('CPU gunslinger blocked by a teammate moves to the nearest clear firing cell', () => {
   // Teammate at (0,3) screens the column. Clear cells below it, such as
-  // (0,4) (4 steps), have a straight shot at the enemy at (0,6).
-  const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: G, team: C }, { x: 0, y: 3, team: C }, { x: 0, y: 6 }] });
+  // (0,4) (4 steps), have a straight shot at the enemy at (0,6). (Speed 6 so
+  // that destination is within one turn's walk and shows up as the order.)
+  const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: G, team: C, speed: 6 }, { x: 0, y: 3, team: C }, { x: 0, y: 6 }] });
   const [, order] = planTurn(g, C).find(([id]) => id === 1);
   assert.deepEqual(order, move(0, 4));
 });
 
 test('CPU gunslinger walks to a nearest cell with a clear shot', () => {
   for (const [ex, ey] of [[4, 6], [6, 2], [3, 7], [7, 7]]) {
-    const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: G, team: C }, { x: ex, y: ey }] });
+    // Speed 6 so the chosen firing cell is within one turn's walk.
+    const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: G, team: C, speed: 6 }, { x: ex, y: ey }] });
     const [[, order]] = planTurn(g, C);
     // Brute force: every cell with a clear straight line to the enemy.
     let best = Infinity;

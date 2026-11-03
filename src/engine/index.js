@@ -1,5 +1,5 @@
 export {
-  Game, Teams, MAX_SPEED, nextStep, chargePlan, isWalkable, distancesTo, strikeCells, hashState, canonicalJSON,
+  Game, Teams, MAX_SPEED, nextStep, walkToward, chargePlan, isWalkable, distancesTo, strikeCells, hashState, canonicalJSON,
 } from './game.js';
 export {
   TerrainTypes, DEFAULT_TERRAIN, getTerrainType, terrainForChar, defineTerrainType, registerTerrainTypes,

@@ -25,17 +25,19 @@
 //   3. Charge (melee units with charges left): if a straight-line charge in
 //      some direction would end with a strike on enemies (and no teammates),
 //      charge in the direction that hits the most.
-//   4. Move: projectile units walk toward the nearest free cell with a clear
+//   4. Move: projectile units head for the nearest free cell with a clear
 //      shot (allowed direction, in range, nothing in between, and not next to
-//      an enemy if that would block the shot) at some enemy;
-//      everyone else walks toward the nearest enemy. "Nearest" is walking
-//      distance around terrain units can't cross (e.g. water); firing cells
-//      must be walkable and reachable, but shots fly over any terrain.
+//      an enemy if that would block the shot) at some enemy; everyone else
+//      heads for the nearest enemy. "Nearest" is walking distance around
+//      terrain units can't cross (e.g. water); firing cells must be walkable
+//      and reachable, but shots fly over any terrain. A move is one turn's
+//      walk, so the order is for the furthest hex toward that destination the
+//      unit can reach this turn (it re-plans next turn).
 //
 // Distances are hex steps; lines are straight hex lines (see engine/hex.js).
 
 import { move, attack, charge } from '../engine/orders.js';
-import { nextStep, strikeCells, distancesTo, chargePlan } from '../engine/game.js';
+import { nextStep, strikeCells, distancesTo, chargePlan, walkToward } from '../engine/game.js';
 import { getUnitType, AttackKind } from '../engine/unitTypes.js';
 import { step, distance, OPPOSITE, neighbors } from '../engine/hex.js';
 
@@ -99,9 +101,13 @@ export function planTurn(game, team) {
 
     const dest = (atk?.kind === AttackKind.PROJECTILE && firingPosition(game, u, atk, enemies, walk))
       || (target && [target.x, target.y]);
-    if (dest && (dest[0] !== u.x || dest[1] !== u.y)) {
-      plan.push([u.id, move(dest[0], dest[1])]);
-      planMove(u, move(dest[0], dest[1]));
+    if (dest) {
+      // Moves are one turn's walk: head as far toward dest as speed allows.
+      const [x, y] = walkToward(game, u, dest[0], dest[1]);
+      if (x !== u.x || y !== u.y) {
+        plan.push([u.id, move(x, y)]);
+        planMove(u, move(x, y));
+      }
     }
   }
   return plan;

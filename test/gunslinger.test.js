@@ -47,7 +47,7 @@ test('if the gunslinger has already shot, an enemy arriving next to it is too la
   // The enemy pikeman steps next to the gunslinger AFTER the shot in the queue.
   const g = new Game({ width: 3, height: 7, units: [{ x: 1, y: 1, type: G }, { x: 1, y: 4, team: C }, { x: 0, y: 3, team: C }] });
   g.queueOrder(1, attack('down'));
-  g.queueOrder(3, move(0, 1));
+  g.queueOrder(3, move(0, 2)); // one step, to a hex beside the gunslinger
   const events = g.tick();
   assert.deepEqual(kills(events), [2], 'the shot succeeded');
   assert.ok(events.some((e) => e.type === 'moved' && e.unitId === 3));
@@ -56,7 +56,7 @@ test('if the gunslinger has already shot, an enemy arriving next to it is too la
 
 test('an enemy arriving BEFORE the shot in the queue blocks it', () => {
   const g = new Game({ width: 3, height: 7, units: [{ x: 1, y: 1, type: G }, { x: 1, y: 4, team: C }, { x: 0, y: 3, team: C }] });
-  g.queueOrder(3, move(0, 1));
+  g.queueOrder(3, move(0, 2)); // one step, to a hex beside the gunslinger
   g.queueOrder(1, attack('down'));
   const events = g.tick();
   assert.deepEqual(kills(events), []);
@@ -67,7 +67,7 @@ test('a shot still flying from an earlier turn keeps going after an enemy reache
   const g = new Game({ width: 3, height: 10, units: [{ x: 1, y: 0, type: G }, { x: 1, y: 7, team: C }, { x: 0, y: 2, team: C }] });
   g.queueOrder(1, attack('down'));
   g.tick(); // the shot is at (1,4), still flying
-  g.queueOrder(3, move(0, 0)); // the pikeman reaches the gunslinger
+  g.queueOrder(3, move(0, 1)); // the pikeman reaches the gunslinger
   const events = g.tick();
   assert.deepEqual(kills(events), [2]);
 });
@@ -91,8 +91,21 @@ test('the CPU doesn\'t plan a shot that would fail, and picks firing hexes away 
   const g = new Game({ width: 5, height: 8, units: [{ x: 2, y: 0, type: G, team: C }, { x: 1, y: 0 }, { x: 2, y: 5 }] });
   const [[, order]] = planTurn(g, C);
   assert.equal(order.type, 'move', 'no doomed shot');
-  const enemyNear = (x, y) => neighbors(x, y).some(([, nx, ny]) => g.unitAt(nx, ny)?.team === Teams.PLAYER);
-  assert.ok(!enemyNear(order.x, order.y), `firing hex ${order.x},${order.y} is not next to an enemy`);
+  // It heads for a firing hex that isn't next to an enemy: after walking
+  // there (one hex a turn), it can shoot.
+  const m = new Match(g, { vsCpu: true });
+  let fired = false;
+  for (let t = 0; t < 6 && !fired; t++) {
+    m.startTurn();
+    fired = g.queue.some((e) => e.unitId === 1 && e.order.type === 'attack');
+    if (fired) {
+      const u = g.getUnit(1);
+      assert.ok(!neighbors(u.x, u.y).some(([, nx, ny]) => g.unitAt(nx, ny)?.team === Teams.PLAYER));
+    } else {
+      m.endTurn();
+    }
+  }
+  assert.ok(fired, 'it got to a clear firing hex and shoots');
 
   // Nothing next to it: it shoots.
   const free = new Game({ width: 5, height: 8, units: [{ x: 2, y: 0, type: G, team: C }, { x: 2, y: 5 }] });

@@ -56,7 +56,7 @@ test('a strike only hits who is there when it runs: walking in afterwards is saf
 
 test('friendly fire: the strike kills teammates too, and the pikeman holds still', () => {
   const g = new Game({ width: 1, height: 5, units: [{ x: 0, y: 0 }, { x: 0, y: 2 }, { x: 0, y: 4, team: C }] });
-  g.queueOrder(1, move(0, 4));
+  g.queueOrder(1, move(0, 1));
   g.tick(); // unit 1 -> (0,1)
   g.queueOrder(1, attack('down'));
   const events = g.tick();

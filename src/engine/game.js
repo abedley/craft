@@ -9,11 +9,11 @@
 // Queue entries:
 //   { unitId, order }      a unit's order (move or attack)
 //   { projectileId }       a projectile still in flight from an earlier turn
-// An entry may also carry `carried: true` (left over from last turn).
+// An entry may also carry `carried: true` (a projectile from last turn).
 //
 // How the queue is built each turn (see queueOrder):
-//   - It starts empty. Things still going from last turn (projectiles in
-//     flight, unfinished walks) are added first, in the order they ran.
+//   - It starts empty. Projectiles still in flight from last turn are added
+//     first, in the order they ran.
 //   - Every new order joins the END of the queue, in the order given. (In a
 //     match the CPU stages its plan at the start of the turn, so its orders
 //     are added before the player's; see match.js.)
@@ -22,10 +22,13 @@
 //     old entry (a unit has at most one); no other entry moves.
 //
 // What each entry does when its turn comes:
-//   move        The unit walks up to `speed` hexes along its route. It stops
+//   move        The unit walks to its target along its route. A move can only
+//               be given to a hex within the unit's `speed` (walking
+//               distance), so it's always a single turn's walk. It stops
 //               early if the next hex is occupied (whoever is there got there
 //               first). Walking into a hex with a projectile in it is a hit.
-//               If it hasn't arrived, the order carries over to next turn.
+//               Nothing carries over: multi-turn walks are for a front end to
+//               break into one move per turn.
 //   attack      projectile kind: a projectile is fired from the unit's hex
 //               and immediately flies up to its `speed` hexes, killing the
 //               first unit it meets. Still flying? It carries over.
@@ -141,7 +144,7 @@ export class Game {
     return this.state.queue.find((e) => e.unitId === unitId) ?? null;
   }
 
-  /** The unit's queued order (new or carried over), or null. */
+  /** The unit's queued order, or null. */
   orderFor(unitId) {
     return this.entryFor(unitId)?.order ?? null;
   }
@@ -215,7 +218,7 @@ export class Game {
 
   /**
    * Queue an order for a unit. A unit has at most one queue entry: a new
-   * order replaces its old one (including one carried over from last turn).
+   * order replaces its old one.
    *
    * Placement: fast orders (quick moves and charges) go to the very front;
    * any other order joins the end. Nothing else in the queue moves. A quick
@@ -230,8 +233,17 @@ export class Game {
     if (!unit) throw new Error(`No unit with id ${unitId}`);
     const err = validateOrder(order, this.state, getUnitType(unit.type));
     if (err) throw new Error(`Invalid order: ${err}`);
-    if (order.type === OrderType.MOVE && !this.isWalkable(order.x, order.y)) {
-      throw new Error(`Invalid order: units can't walk on ${getTerrainType(this.terrainAt(order.x, order.y)).name}`);
+    if (order.type === OrderType.MOVE) {
+      if (!this.isWalkable(order.x, order.y)) {
+        throw new Error(`Invalid order: units can't walk on ${getTerrainType(this.terrainAt(order.x, order.y)).name}`);
+      }
+      // One turn's walk at most: the target must be within the unit's speed
+      // (walking distance around terrain; other units don't count).
+      const d = distancesTo(this.state, order.x, order.y).get(`${unit.x},${unit.y}`);
+      if (d === undefined) throw new Error(`Invalid order: unit ${unitId} has no route to ${order.x},${order.y}`);
+      if (d > unit.speed) {
+        throw new Error(`Invalid order: too far. Unit ${unitId} can move up to ${unit.speed} hex${unit.speed === 1 ? '' : 'es'} this turn (${order.x},${order.y} is ${d} away)`);
+      }
     }
     if (order.quick && !(unit.quickMoves > 0)) throw new Error(`Unit ${unitId} has no quick move left`);
     if (order.type === OrderType.CHARGE && !(unit.charges > 0)) throw new Error(`Unit ${unitId} has no charge left`);
@@ -244,13 +256,11 @@ export class Game {
 
   /**
    * Remove unit orders from the queue; with a team, only that team's.
-   * Projectiles in flight are never removed. With `newOnly`, orders carried
-   * over from last turn are kept.
+   * Projectiles in flight are never removed.
    */
-  clearQueue(team = null, { newOnly = false } = {}) {
+  clearQueue(team = null) {
     this.state.queue = this.state.queue.filter((e) => {
       if (e.projectileId !== undefined) return true;
-      if (newOnly && e.carried) return true;
       return team !== null && this.getUnit(e.unitId)?.team !== team;
     });
   }
@@ -260,8 +270,8 @@ export class Game {
   /**
    * Run the queue front to back (see the top of this file). Every event has
    * `step`: the 1-based position in the queue of the entry that caused it.
-   * The entries still active afterwards (unfinished moves, projectiles in
-   * flight) become next turn's queue, marked `carried`, in the order they
+   * Projectiles still in flight afterwards become next turn's queue, marked
+   * `carried`, in the order they
    * ran. Returns the events.
    */
   tick() {
@@ -290,11 +300,7 @@ export class Game {
           unit.quickMoves -= 1;
           events.push({ type: 'quickMove', step: stepNo, unitId: unit.id, remaining: unit.quickMoves });
         }
-        if (this.walk(unit, order, events, stepNo)) {
-          // A carried quick move is an ordinary walk from then on.
-          const { quick, ...rest } = order;
-          carried.push({ unitId: unit.id, order: rest, carried: true });
-        }
+        this.walk(unit, order, events, stepNo);
         return;
       }
 
@@ -369,8 +375,9 @@ export class Game {
   }
 
   /**
-   * Walk a unit up to its speed toward the order's target. Returns true if
-   * the order should carry over (not arrived, unit alive).
+   * Walk a unit toward the order's target (at most its speed away; checked
+   * when the order is given). Stops early at an occupied hex. Nothing
+   * carries over: the move is over when its entry is.
    */
   walk(unit, order, events, stepNo) {
     const path = [[unit.x, unit.y]];
@@ -402,12 +409,9 @@ export class Game {
     if (path.length > 1) {
       events.push({ type: 'moved', step: stepNo, unitId: unit.id, from: path[0], to: path[path.length - 1], path });
     }
-    if (!alive) return false;
-    if (unit.x === order.x && unit.y === order.y) {
+    if (alive && unit.x === order.x && unit.y === order.y) {
       events.push({ type: 'arrived', step: stepNo, unitId: unit.id, at: [unit.x, unit.y] });
-      return false;
     }
-    return true;
   }
 
   /**
@@ -554,6 +558,27 @@ export function nextStep(unit, board = null) {
     if (dist.get(`${x},${y}`) === here - 1) return { x, y };
   }
   return stay;
+}
+
+/**
+ * The furthest hex a unit can reach this turn on its route toward (tx, ty):
+ * up to `steps` (default its speed) hexes along the same route a move would
+ * take. It stops short of the target if another unit stands on it. Other
+ * units elsewhere are ignored. Returns [x, y] (its own hex if it can't get
+ * any closer). For planners that want to head somewhere further than one
+ * turn's walk.
+ */
+export function walkToward(board, unit, tx, ty, steps = unit.speed) {
+  const order = { type: OrderType.MOVE, x: tx, y: ty };
+  const occupied = (x, y) => board.units?.some((u) => u.id !== unit.id && u.x === x && u.y === y);
+  let cur = { x: unit.x, y: unit.y, order };
+  for (let k = 0; k < steps; k++) {
+    const next = nextStep(cur, board.state ?? board);
+    if (next.x === cur.x && next.y === cur.y) break;
+    if (next.x === tx && next.y === ty && occupied(tx, ty)) break;
+    cur = { ...cur, x: next.x, y: next.y };
+  }
+  return [cur.x, cur.y];
 }
 
 /** Is (x, y) on the board and walkable? Works on a Game or its state. */
