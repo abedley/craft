@@ -50,6 +50,7 @@ export class Game {
       throw new Error('This save is from the square-grid version of the game and can\'t be loaded on the hex grid');
     }
     game.state = structuredClone(snapshot);
+    for (const u of game.state.units) u.quickMoves ??= u.team === Teams.PLAYER ? 1 : 0;
     return game;
   }
 
@@ -91,6 +92,7 @@ export class Game {
    * @param {{type?:string, team?:string, speed?:number}} [opts]
    *   type: key of UnitTypes (default: the units file's "default").
    *   team: Teams.PLAYER (default) or Teams.CPU.
+   *   Player units start with one quick move (see queueOrder); CPU units have none.
    *   speed: cells per tick; defaults to the type's speed. Overriding it is
    *   meant for debugging/tests.
    */
@@ -105,7 +107,7 @@ export class Game {
     if (this.getUnit(unitId)) throw new Error(`Unit id ${unitId} already exists`);
     this.state.nextUnitId = Math.max(this.state.nextUnitId, unitId + 1);
     // orderSeq: when the current order was applied (lower = given earlier).
-    const unit = { id: unitId, team, type, x, y, speed, order: null, orderSeq: null };
+    const unit = { id: unitId, team, type, x, y, speed, quickMoves: team === Teams.PLAYER ? 1 : 0, order: null, orderSeq: null };
     this.state.units.push(unit);
     this.state.units.sort((a, b) => a.id - b.id);
     return unit;
@@ -124,17 +126,34 @@ export class Game {
   }
 
   /**
-   * Queue an order for a unit. It takes effect on the next tick(). If the
-   * same unit is given several orders before a tick, only the last one is
-   * carried out. Throws if the order is invalid (including orders the unit's
-   * type can't perform) so the UI can report it immediately.
+   * Queue an order for a unit. It takes effect on the next tick(). A unit has
+   * at most one queued order: queueing another replaces it.
+   *
+   * Quick moves (move orders with `quick: true`) go to the FRONT of the
+   * queue, after any other quick moves already there. Being applied first,
+   * they count as the earliest-given orders and win same-instant contests
+   * for a hex (see resolve.js). The unit's quick move is only used up when
+   * the order is applied on tick(), so replacing or clearing it first costs
+   * nothing.
+   *
+   * Throws if the order is invalid (including orders the unit's type can't
+   * perform, or a quick move the unit doesn't have) so the UI can report it.
    */
   queueOrder(unitId, order) {
     const unit = this.getUnit(unitId);
     if (!unit) throw new Error(`No unit with id ${unitId}`);
     const err = validateOrder(order, this.state, getUnitType(unit.type));
     if (err) throw new Error(`Invalid order: ${err}`);
-    this.state.queue.push({ unitId, order: structuredClone(order) });
+    if (order.quick && !(unit.quickMoves > 0)) throw new Error(`Unit ${unitId} has no quick move left`);
+    const q = this.state.queue.filter((e) => e.unitId !== unitId);
+    const entry = { unitId, order: structuredClone(order) };
+    if (order.quick) {
+      const firstNonQuick = q.findIndex((e) => !e.order.quick);
+      q.splice(firstNonQuick === -1 ? q.length : firstNonQuick, 0, entry);
+    } else {
+      q.push(entry);
+    }
+    this.state.queue = q;
   }
 
   /** Remove queued orders; with a team, only that team's orders. */
@@ -150,7 +169,10 @@ export class Game {
    * Advance the simulation by one tick.
    *
    * 1. Apply queued orders (only the last one per unit, in queue order).
-   *    - move: becomes the unit's standing order.
+   *    - move: becomes the unit's standing order. A quick move also uses up
+   *      one of the unit's quick moves; it was queued at the front, so it
+   *      gets the lowest order number and wins same-instant contests for as
+   *      long as the unit follows it.
    *    - attack: the unit holds still this tick and any move order is
    *      cancelled. What happens depends on its type's attack kind:
    *        projectile: a projectile is fired from the unit's cell right away;
@@ -228,6 +250,10 @@ export class Game {
       } else {
         unit.order = order;
         unit.orderSeq = s.nextOrderSeq++;
+        if (order.quick) {
+          unit.quickMoves -= 1;
+          events.push({ type: 'quickMove', unitId: unit.id, to: [order.x, order.y], remaining: unit.quickMoves });
+        }
       }
     });
     s.queue = [];

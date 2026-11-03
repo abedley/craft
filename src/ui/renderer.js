@@ -26,6 +26,7 @@ const COLORS = {
   blocked: '#ff6b6b',
   projectile: '#ffa94d',
   shotLine: 'rgba(255,169,77,0.8)',
+  quick: '#6ff2ff',
   label: '#0d1014',
 };
 
@@ -123,7 +124,8 @@ export class Renderer {
       const order = pending ?? u.order;
       if (!order) continue;
       if (order.type === 'move') {
-        const color = !pending ? COLORS.activeOrder : u.team === 'cpu' ? TEAM_COLORS.cpu : COLORS.queuedOrder;
+        const color = order.quick && pending ? COLORS.quick
+          : !pending ? COLORS.activeOrder : u.team === 'cpu' ? TEAM_COLORS.cpu : COLORS.queuedOrder;
         this.drawOrderLine(u, order, color, !!pending);
       } else if (order.type === 'attack') {
         const atk = UnitTypes[u.type].attack;
@@ -169,6 +171,7 @@ export class Renderer {
       ctx.fillStyle = COLORS.label;
       ctx.fillText(String(u.id), cx, cy + 1);
       if (u.speed > 1) this.drawSpeedBadge(cx + r * 0.75, cy - r * 0.75, u.speed);
+      if (u.quickMoves > 0) this.drawQuickPip(cx - r * 0.8, cy + r * 0.8);
     }
 
     // Projectiles: a dot with a short tail pointing back the way it came.
@@ -278,6 +281,28 @@ export class Renderer {
     ctx.moveTo(cx + m, cy - m); ctx.lineTo(cx - m, cy + m);
     ctx.stroke();
     ctx.lineCap = 'butt';
+  }
+
+  /** Small lightning-bolt pip: this unit still has its quick move. */
+  drawQuickPip(x, y) {
+    const { ctx, cell } = this;
+    const s = cell * 0.13;
+    ctx.save();
+    ctx.fillStyle = COLORS.label;
+    ctx.beginPath();
+    ctx.arc(x, y, s * 1.15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = COLORS.quick;
+    ctx.beginPath();
+    ctx.moveTo(x + s * 0.25, y - s * 0.9);
+    ctx.lineTo(x - s * 0.45, y + s * 0.1);
+    ctx.lineTo(x, y + s * 0.1);
+    ctx.lineTo(x - s * 0.25, y + s * 0.9);
+    ctx.lineTo(x + s * 0.45, y - s * 0.1);
+    ctx.lineTo(x, y - s * 0.1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
 
   drawSpeedBadge(x, y, speed) {

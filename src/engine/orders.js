@@ -19,6 +19,15 @@ export function move(x, y) {
 }
 
 /**
+ * Create a quick move: a move order that jumps to the FRONT of the order
+ * queue, so it counts as the earliest order given and wins same-instant
+ * contests for a hex. Each unit has a limited number (see Game#addUnit).
+ */
+export function quickMove(x, y) {
+  return { type: OrderType.MOVE, x, y, quick: true };
+}
+
+/**
  * Create an attack order in a hex direction ("up", "down-left", ...). What the
  * attack does (shoot, strike, ...) comes from the unit's type definition.
  */
@@ -35,9 +44,11 @@ export function validateOrder(order, grid, unitType = null) {
   if (unitType && !unitType.orders.includes(order.type)) {
     return `${unitType.name} units cannot ${order.type}`;
   }
+  if (order.quick !== undefined && order.type !== OrderType.MOVE) return 'only move orders can be quick';
   switch (order.type) {
     case OrderType.MOVE: {
       const { x, y } = order;
+      if (order.quick !== undefined && order.quick !== true) return '"quick" must be true when present';
       if (!Number.isInteger(x) || !Number.isInteger(y)) return 'coordinates must be integers';
       if (x < 0 || y < 0 || x >= grid.width || y >= grid.height) return 'target out of bounds';
       return null;

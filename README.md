@@ -50,6 +50,19 @@ Each turn (`src/match.js`):
    The player cannot order CPU units.
 3. **End turn** (`match.endTurn()`) runs one tick, then the CPU stages the next turn.
 
+### Quick move
+
+Each of the player's units has **one quick move per match** (`quickMove(x, y)`; CPU units have none).
+It's an ordinary move order except that it goes to the **very front of the order queue**, ahead
+of the CPU's staged orders. Being applied first, it counts as the earliest order given, so it wins
+same-moment ties for a hex, including ones the CPU would otherwise win. It keeps that priority for
+the rest of that walk.
+
+- It's only used up when the turn runs. Replacing it with another order or clearing it first
+  costs nothing.
+- A unit has at most one queued order; queueing a new one replaces the old one.
+- `unit.quickMoves` holds how many are left. The `quickMove` event reports when one is spent.
+
 `match.status` is `playing`, `won` (no CPU units left), `lost` (no player units left) or `draw` (both
 wiped out in the same tick). Boards with no CPU units are sandboxes and never end.
 
@@ -226,6 +239,8 @@ UI header, so two runs with the same orders can be compared at a glance.
   lines, listed first in the Queue tab); tap **End turn** when your orders are in. The header shows
   YOU WIN / YOU LOSE / DRAW when a side is wiped out.
 - **Move** mode: tap one of your units to select it, tap an empty cell to queue `move(x, y)`.
+- **Quick** mode: the same, but queues that unit's one-time quick move (drawn in cyan, listed first in
+  the queue). Units that still have their quick move show a small lightning pip.
 - **Attack** mode: tap one of your units, then tap any cell or unit to attack toward it, snapped to the
   nearest direction that unit's type allows. Queued melee attacks shade the
   struck cells in the team's colour.

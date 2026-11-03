@@ -7,6 +7,9 @@
 //      same-instant ties for a cell.
 //   2. The player stages orders for their own units (playerOrder()). They
 //      can change them freely until the turn ends; the CPU's plan is fixed.
+//      Each player unit has one quick move per match: a move order that goes
+//      to the very front of the queue, ahead of the CPU, so it wins
+//      same-instant ties for a hex.
 //   3. endTurn(): runs one engine tick, then starts the next turn.
 //
 // All match state lives in the Game state (the CPU's staged orders are just
@@ -51,11 +54,13 @@ export class Match {
     const staged = g.queue.some((q) => g.getUnit(q.unitId)?.team === Teams.CPU);
     if (staged) return [];
     const plan = planTurn(g, Teams.CPU);
-    // Put CPU orders ahead of anything already queued (e.g. scenario setup).
-    const playerOrders = g.queue;
+    // CPU orders go ahead of anything already queued (e.g. scenario setup),
+    // except quick moves, which always stay at the very front.
+    const quick = g.queue.filter((q) => q.order.quick);
+    const rest = g.queue.filter((q) => !q.order.quick);
     g.state.queue = [];
     for (const [id, order] of plan) g.queueOrder(id, order);
-    g.state.queue.push(...playerOrders);
+    g.state.queue = [...quick, ...g.state.queue, ...rest];
     return plan;
   }
 

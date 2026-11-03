@@ -18,7 +18,7 @@
 // makes the CPU re-plan. "Back" restores the snapshot taken just before the
 // last "End turn", including both sides' staged orders (an exact undo).
 
-import { Game, Teams, MAX_SPEED, move, attack, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
+import { Game, Teams, MAX_SPEED, move, quickMove, attack, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
 import { Match, MatchStatus } from '../match.js';
 import { Renderer } from './renderer.js';
 import { scenarios } from '../scenarios.js';
@@ -188,8 +188,12 @@ export class DebugUI {
     if (mode === 'attack' && this.selectedId !== null && !this.attackOrder(this.game.getUnit(this.selectedId))) {
       this.selectedId = null;
     }
+    if (mode === 'quick' && this.selectedId !== null && !(this.game.getUnit(this.selectedId)?.quickMoves > 0)) {
+      this.selectedId = null;
+    }
     this.hint({
       move: 'Tap a unit to select it, then tap a cell to queue a move.',
+      quick: 'Quick move (once per unit): goes to the front of the queue, ahead of the CPU.',
       attack: 'Tap one of your units, then tap a cell or unit to attack toward it.',
       add: 'Tap an empty cell to add a unit.',
       remove: 'Tap a unit to remove it.',
@@ -242,19 +246,26 @@ export class DebugUI {
           break;
         }
         case 'move':
-        default:
+        case 'quick':
+        default: {
+          const quick = this.mode === 'quick';
           if (unit && unit.id === this.selectedId) {
             this.selectedId = null;
             this.hint('Deselected.');
           } else if (unit && unit.team === Teams.CPU) {
             this.hint(`Unit ${unit.id} is a CPU unit${unit.order ? ` (${fmtOrder(unit.order)})` : ''}.`);
+          } else if (unit && quick && !(unit.quickMoves > 0)) {
+            this.hint(`Unit ${unit.id} has already used its quick move.`, true);
+            return;
           } else if (unit) {
             this.selectedId = unit.id;
-            this.hint(`Unit ${unit.id} selected. Tap a cell to move.`);
+            this.hint(`Unit ${unit.id} selected. Tap a cell to ${quick ? 'quick move (goes first)' : 'move'}.`);
           } else if (this.selectedId !== null) {
-            this.match.playerOrder(this.selectedId, move(x, y));
-            this.hint(`Queued: unit ${this.selectedId} move(${x}, ${y}).`);
+            const order = quick ? quickMove(x, y) : move(x, y);
+            this.match.playerOrder(this.selectedId, order);
+            this.hint(`Queued: unit ${this.selectedId} ${fmtOrder(order)}${quick ? ' at the front of the queue' : ''}.`);
           }
+        }
       }
     } catch (err) {
       this.hint(err.message, true);
@@ -415,7 +426,7 @@ export class DebugUI {
         const el = $('#tab-units');
         const projLines = g.projectiles.map((p) => `<div class="shot">projectile ${p.id} @ ${p.x},${p.y} → ${p.dir} (from #${p.ownerId})</div>`).join('');
         el.innerHTML = projLines + (g.units.length
-          ? g.units.map((u) => `<div class="${teamClass(u)}">${teamLabel(u)} #${u.id} ${UnitTypes[u.type].name} @ ${u.x},${u.y} spd ${u.speed} ${u.order ? fmtOrder(u.order) : '<span class="meta">idle</span>'}</div>`).join('')
+          ? g.units.map((u) => `<div class="${teamClass(u)}">${teamLabel(u)} #${u.id} ${UnitTypes[u.type].name} @ ${u.x},${u.y} spd ${u.speed}${u.quickMoves > 0 ? ' ⚡' : ''} ${u.order ? fmtOrder(u.order) : '<span class="meta">idle</span>'}</div>`).join('')
           : '<div class="empty">No units.</div>');
         break;
       }
@@ -437,7 +448,7 @@ function teamClass(u) {
 }
 
 function fmtOrder(o) {
-  if (o.type === 'move') return `move(${o.x}, ${o.y})`;
+  if (o.type === 'move') return `${o.quick ? 'QUICK ' : ''}move(${o.x}, ${o.y})`;
   if (o.type === 'attack') return `attack(${o.dir})`;
   return o.type;
 }
@@ -469,6 +480,7 @@ function fmtEvent(e) {
     case 'blocked': return `<div class="blocked">#${e.unitId} blocked at ${e.at} (${e.reason}${e.by != null ? ` by #${e.by}` : ''}${e.time ? ` @t=${e.time}` : ''})</div>`;
     case 'arrived': return `<div class="arrived">#${e.unitId} arrived at ${e.at}</div>`;
     case 'orderApplied': return `<div class="meta">#${e.unitId} ← ${fmtOrder(e.order)}</div>`;
+    case 'quickMove': return `<div class="quick">#${e.unitId} used its quick move (${e.remaining} left)</div>`;
     case 'shot': return `<div class="shot">#${e.unitId} fired projectile ${e.projectileId} ${e.dir} from ${e.from}</div>`;
     case 'projectileMoved': return `<div class="shot">projectile ${e.projectileId} ${e.path.map((p) => p.join(',')).join(' → ')}</div>`;
     case 'projectileExpired': return `<div class="meta">projectile ${e.projectileId} left the grid @t=${e.time}</div>`;

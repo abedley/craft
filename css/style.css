@@ -79,7 +79,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.on { border-color: var(--ok); color: var(--ok); }
 
 .segmented { gap: 0; }
-.segmented button { border-radius: 0; }
+.segmented button { border-radius: 0; padding: 0 4px; }
 .segmented button:first-child { border-radius: 8px 0 0 8px; }
 .segmented button:last-child { border-radius: 0 8px 8px 0; }
 .segmented button.active { background: var(--line); border-color: var(--accent); }
@@ -121,6 +121,7 @@ button.on { border-color: var(--ok); color: var(--ok); }
 .tab-body .arrived { color: var(--ok); }
 .tab-body .killed { color: var(--warn); font-weight: 700; }
 .tab-body .shot { color: #ffa94d; }
+.tab-body .quick { color: #6ff2ff; }
 .tab-body .meta { color: var(--muted); }
 .tab-body .team-player { color: #8cc4ff; }
 .tab-body .team-cpu { color: #f08cbd; }
