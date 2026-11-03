@@ -67,6 +67,7 @@ test('the quick move is used up on tick, and only once', () => {
 
 test('replacing or clearing a queued quick move does not use it up', () => {
   const g = new Game({ width: 1, height: 6, units: [{ x: 0, y: 0 }, { x: 0, y: 5, team: C }] });
+  g.getUnit(2).charges = 0; // keep the CPU pikeman from charging in (charge.test.js covers that)
   const m = new Match(g);
   m.startTurn();
   m.playerOrder(1, quickMove(0, 2));
@@ -81,6 +82,7 @@ test('replacing or clearing a queued quick move does not use it up', () => {
 
 test('an unfinished quick move carries over ahead of the CPU\'s new orders', () => {
   const g = new Game({ width: 1, height: 8, units: [{ x: 0, y: 0 }, { x: 0, y: 7, team: C }] });
+  g.getUnit(2).charges = 0;
   const m = new Match(g);
   m.startTurn();
   m.playerOrder(1, quickMove(0, 3));

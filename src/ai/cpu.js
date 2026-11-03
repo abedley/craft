@@ -22,9 +22,9 @@
 //        within reach, as the board stands now, and never when a teammate
 //        would be in the strike: either standing there or, for a teammate
 //        already planned this turn, stepping in.
-//   3. Charge (units with charges left): if the nearest enemy is too far to
-//      reach this turn with a normal move but a charge would end next to it,
-//      charge at it.
+//   3. Charge (melee units with charges left): if a straight-line charge in
+//      some direction would end with a strike on enemies (and no teammates),
+//      charge in the direction that hits the most.
 //   4. Move: projectile units walk toward the nearest free cell with a clear
 //      shot (allowed direction, in range, nothing in between, and not next to
 //      an enemy if that would block the shot) at some enemy;
@@ -35,7 +35,7 @@
 // Distances are hex steps; lines are straight hex lines (see engine/hex.js).
 
 import { move, attack, charge } from '../engine/orders.js';
-import { nextStep, strikeCells, distancesTo } from '../engine/game.js';
+import { nextStep, strikeCells, distancesTo, chargePlan } from '../engine/game.js';
 import { getUnitType, AttackKind } from '../engine/unitTypes.js';
 import { step, distance, OPPOSITE, neighbors } from '../engine/hex.js';
 
@@ -85,13 +85,14 @@ export function planTurn(game, team) {
     const walk = distancesTo(game, u.x, u.y);
     const target = nearest(u, enemies, walk);
 
-    // Charge: if a normal move can't reach the nearest enemy this turn but a
-    // charge can (ending next to it, ready to strike next turn), charge.
-    if (def.charge && u.charges > 0 && target) {
-      const d = walk.get(`${target.x},${target.y}`);
-      if (d > u.speed + 1 && d <= def.charge.distance + 1) {
-        plan.push([u.id, charge(target.x, target.y)]);
-        planMove(u, move(target.x, target.y));
+    // Charge: no attack from here, but a straight-line charge would end in a
+    // strike on enemies (and none of our own): charge in the best direction.
+    if (def.charge && u.charges > 0 && atk?.kind === AttackKind.MELEE) {
+      const dir = bestCharge(game, u, atk, teamCells);
+      if (dir) {
+        plan.push([u.id, charge(dir)]);
+        const end = chargePlan(game, u, dir).end;
+        teamCells.add(`${end.x},${end.y}`);
         continue;
       }
     }
@@ -143,6 +144,22 @@ function bestStrike(game, u, atk, teamCells) {
 }
 
 /** Nearest enemy by walking distance; null if none can be reached. */
+/** Direction whose charge-then-strike hits the most enemies and no teammates. */
+function bestCharge(game, u, atk, teamCells) {
+  let best = null;
+  for (const dir of inPriorityOrder(atk.directions)) {
+    const plan = chargePlan(game, u, dir);
+    if (plan.path.some(([x, y], i) => i > 0 && teamCells.has(`${x},${y}`))) continue;
+    if (plan.strike.some(([x, y]) => teamCells.has(`${x},${y}`))) continue;
+    const enemies = plan.strike.filter(([x, y]) => {
+      const occ = game.unitAt(x, y);
+      return occ && occ.team !== u.team;
+    }).length;
+    if (enemies > 0 && (!best || enemies > best.enemies)) best = { dir, enemies };
+  }
+  return best?.dir ?? null;
+}
+
 function nearest(u, others, walk) {
   let best = null;
   for (const o of others) {

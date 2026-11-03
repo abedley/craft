@@ -6,7 +6,7 @@
 // neighbouring hex centres and is used to scale everything drawn in a cell.
 
 import {
-  UnitTypes, AttackKind, strikeCells, getTerrainType, step, fromAxial, axialRound, DIRECTION_ANGLES,
+  UnitTypes, AttackKind, strikeCells, chargePlan, getTerrainType, step, fromAxial, axialRound, DIRECTION_ANGLES,
 } from '../engine/index.js';
 
 const SQRT3 = Math.sqrt(3);
@@ -127,9 +127,11 @@ export class Renderer {
       if (!u) continue;
       const { order } = entry;
       if (order.type === 'move') {
-        const color = order.quick ? COLORS.quick : order.charge ? COLORS.charge
+        const color = order.quick ? COLORS.quick
           : entry.carried ? COLORS.activeOrder : u.team === 'cpu' ? TEAM_COLORS.cpu : COLORS.queuedOrder;
         this.drawOrderLine(u, order, color, !entry.carried);
+      } else if (order.type === 'charge') {
+        this.drawCharge(game, u, order.dir);
       } else if (order.type === 'attack') {
         const atk = UnitTypes[u.type].attack;
         if (atk.kind === AttackKind.PROJECTILE) this.drawShotLine(game, u, order.dir, atk.range);
@@ -322,6 +324,34 @@ export class Renderer {
       ctx.stroke();
     }
     ctx.restore();
+  }
+
+  /** A queued charge: its straight path, then the strike it ends with. */
+  drawCharge(game, u, dir) {
+    const { ctx } = this;
+    const plan = chargePlan(game, u, dir);
+    if (plan.path.length > 1) {
+      const pts = plan.path.map(([x, y]) => this.center(x, y));
+      ctx.save();
+      ctx.strokeStyle = COLORS.charge;
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      ctx.setLineDash([8, 5]);
+      ctx.beginPath();
+      ctx.moveTo(...pts[0]);
+      for (const p of pts.slice(1)) ctx.lineTo(...p);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Ghost of where it ends up.
+      const [ex, ey] = pts[pts.length - 1];
+      ctx.globalAlpha = 0.5;
+      ctx.beginPath();
+      ctx.arc(ex, ey, this.cell * 0.3, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    const atk = UnitTypes[u.type].attack;
+    if (atk?.kind === AttackKind.MELEE) this.drawStrike(game, { ...u, x: plan.end.x, y: plan.end.y }, dir, atk.reach);
   }
 
   /** Small double-chevron pip: this unit still has a charge. */

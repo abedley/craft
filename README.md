@@ -71,19 +71,25 @@ wiped out in the same tick). Boards with no CPU units are sandboxes and never en
 
 ### Charge (pikemen)
 
-Pikemen have a **charge**: a move of up to **3 hexes** that, like a quick move, goes to the **front
-of the queue** (`charge(x, y)`). Each pikeman can charge **once per match**. It's defined in the unit
-JSON as `"charge": { "distance": 3, "uses": 1 }`, so the distance, the number of uses and which
-unit types have it are all data. `unit.charges` holds how many are left.
+Pikemen have a **charge** (`charge(dir)`): they rush **in a straight line** in one of the 6 hex
+directions, up to **3 hexes**, and then **strike in that same direction**. Like a quick move it goes
+to the **front of the queue**. Each pikeman can charge **once per match**.
 
+- **Collides with a unit:** the charge stops in the hex before it, and the strike hits that unit
+  (and the hex behind it, the pike's normal reach of 2). Friendly fire applies: charging into a
+  teammate strikes it.
+- **Nothing in the way:** it goes the full 3 hexes and strikes the 2 hexes ahead.
+- **Water or the board edge:** it stops there and still strikes ahead (strikes ignore terrain).
+- **A shot in flight in its path:** the pikeman is hit and never strikes.
+- It's a single queue entry; nothing carries over to the next turn.
 - **Front of the queue:** quick moves and charges share the front section, in the order they're
   given. The CPU stages first, so a CPU charge leads that section.
-- **Stopping:** it stops early at an occupied hex like any move. If the target is further than 3
-  hexes, the rest of the walk carries over as an ordinary 1-hex-a-turn walk.
 - **Cost:** it's used up only when it runs; replacing or clearing it first costs nothing.
-- **Both teams:** it's a unit ability, so CPU pikemen have it too. The CPU charges when the nearest
-  enemy is too far to reach with a normal move this turn but a charge would put it alongside.
-- **Combos:** charging next to an enemy gunslinger before its shot comes up stops the shot.
+- **Defined in the unit JSON:** `"charge": { "distance": 3, "uses": 1 }` on the pikeman. Any unit
+  type can have one; the charge ends with that type's attack. `chargePlan(game, unit, dir)` previews
+  the path, why it stops, and the strike hexes. `unit.charges` holds how many are left.
+- **CPU:** CPU pikemen charge too, when no normal strike reaches but a charge's closing strike would
+  hit an enemy (never a teammate), in the direction that hits the most.
 
 ### CPU (`src/ai/cpu.js`)
 
@@ -220,7 +226,7 @@ error messages that name the unit and field.
 | `attack.reach` | melee: how many hexes in a row it strikes |
 | `attack.speed` | projectile: hexes flown per queue entry, 1–6 |
 | `attack.range` | projectile: max cells travelled; leave it out for unlimited |
-| `charge` | optional `{ "distance": 3, "uses": 1 }`: a move of up to `distance` hexes that goes to the front of the queue, `uses` times per unit per match |
+| `charge` | optional `{ "distance": 3, "uses": 1 }`: a straight-line rush of up to `distance` hexes, ending with the unit's attack in that direction; goes to the front of the queue; `uses` times per unit per match |
 | `attack.blockedByAdjacentEnemy` | optional, `true`: the attack fails if an enemy is next to the unit when its queue entry runs |
 | `default` | type used when a unit doesn't name one |
 | `renamed` | optional: old type keys mapped to current ones, so old saves still load |
@@ -283,8 +289,9 @@ UI header, so two runs with the same orders can be compared at a glance.
 - **Move** mode: tap one of your units to select it, tap an empty cell to queue `move(x, y)`.
 - **Paint** mode: pick a terrain type and tap or drag across hexes to paint it. The CPU re-plans
   afterwards.
-- **Charge** mode: tap one of your pikemen, then a hex, to queue its one-time 3-hex charge (purple;
-  pikemen that still have it show a purple chevron pip).
+- **Charge** mode: tap one of your pikemen, then tap toward where it should charge (any hex or unit;
+  snapped to the nearest hex direction). The board shows the straight path in purple and the hexes
+  its closing strike will hit. Pikemen that still have a charge show a purple chevron pip.
 - **Quick** mode: the same, but queues that unit's one-time quick move (drawn in cyan, listed first in
   the queue). Units that still have their quick move show a small lightning pip.
 - **Attack** mode: tap one of your units, then tap any cell or unit to attack toward it, snapped to the

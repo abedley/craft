@@ -159,13 +159,18 @@ export const scenarios = {
   },
 
   'Pikeman: charge': () => {
-    // Gunslinger 3 (CPU team) is about to shoot down at gunslinger 1. Pikeman
-    // 2 charges 3 hexes up next to it: the charge is at the front of the
-    // queue, so when the shot comes up an enemy is beside the gunslinger and
-    // the shot fails.
-    const g = board([{ x: 1, y: 3, type: GS }, { x: 0, y: 4 }, { x: 1, y: 0, type: GS, team: C }]);
+    // CPU gunslinger 3 is about to shoot down at gunslinger 1. Pikeman 2
+    // charges straight up column 1, first in the queue: after the full 3
+    // hexes it's right below the gunslinger, and its closing strike kills it
+    // before the shot. Pikeman 4 charges down-right and collides with enemy 5
+    // after 1 hex: it stops there and strikes it.
+    const g = board([
+      { x: 2, y: 4, type: GS }, { x: 1, y: 4 }, { x: 1, y: 0, type: GS, team: C },
+      { x: 4, y: 5 }, { x: 6, y: 6, team: C },
+    ]);
     g.queueOrder(3, attack('down'));
-    g.queueOrder(2, charge(0, 1));
+    g.queueOrder(2, charge('up'));
+    g.queueOrder(4, charge('down-right'));
     return g;
   },
 

@@ -18,8 +18,7 @@
 //   4. the player's new orders
 //
 // What each entry does when its turn comes:
-//   move        The unit walks up to `speed` hexes along its route (a charge:
-//               up to its type's charge distance, 3 for pikemen). It stops
+//   move        The unit walks up to `speed` hexes along its route. It stops
 //               early if the next hex is occupied (whoever is there got there
 //               first). Walking into a hex with a projectile in it is a hit.
 //               If it hasn't arrived, the order carries over to next turn.
@@ -33,6 +32,13 @@
 //               the attack fails and nothing happens. A shot already fired
 //               (earlier in the queue, or still flying from a previous turn)
 //               is not affected.
+//   charge      The unit rushes in a straight line in the chosen direction,
+//               up to its type's charge distance (3 for pikemen). It stops
+//               early if the next hex holds a unit (a collision) or is
+//               unwalkable or off the board. Wherever it stops, it then makes
+//               its attack in the same direction, so a pikeman that collides
+//               strikes the unit it ran into (friendly fire included). Running
+//               into a projectile in flight is a hit. Nothing carries over.
 //   projectile  (carried over) flies another `speed` hexes the same way.
 //
 // Determinism: no randomness, clock or DOM; state is plain JSON.
@@ -225,7 +231,7 @@ export class Game {
       throw new Error(`Invalid order: units can't walk on ${getTerrainType(this.terrainAt(order.x, order.y)).name}`);
     }
     if (order.quick && !(unit.quickMoves > 0)) throw new Error(`Unit ${unitId} has no quick move left`);
-    if (order.charge && !(unit.charges > 0)) throw new Error(`Unit ${unitId} has no charge left`);
+    if (order.type === OrderType.CHARGE && !(unit.charges > 0)) throw new Error(`Unit ${unitId} has no charge left`);
     const q = this.state.queue.filter((e) => e.unitId !== unitId);
     const entry = { unitId, order: structuredClone(order) };
     if (goesToFront(order)) {
@@ -285,44 +291,42 @@ export class Game {
           unit.quickMoves -= 1;
           events.push({ type: 'quickMove', step: stepNo, unitId: unit.id, remaining: unit.quickMoves });
         }
-        if (order.charge) {
-          unit.charges -= 1;
-          events.push({ type: 'charge', step: stepNo, unitId: unit.id, remaining: unit.charges });
-        }
-        const distance = order.charge ? getUnitType(unit.type).charge.distance : unit.speed;
-        if (this.walk(unit, order, events, stepNo, distance)) {
-          // A carried quick move or charge is an ordinary walk from then on.
-          const { quick, charge, ...rest } = order;
+        if (this.walk(unit, order, events, stepNo)) {
+          // A carried quick move is an ordinary walk from then on.
+          const { quick, ...rest } = order;
           carried.push({ unitId: unit.id, order: rest, carried: true });
         }
         return;
       }
 
-      // Attack.
-      const atk = getUnitType(unit.type).attack;
-      if (atk.blockedByAdjacentEnemy) {
-        const enemy = this.adjacentEnemy(unit);
-        if (enemy) {
-          events.push({ type: 'attackBlocked', step: stepNo, unitId: unit.id, reason: 'enemy adjacent', by: enemy.id });
-          return;
+      if (order.type === OrderType.CHARGE) {
+        unit.charges -= 1;
+        events.push({ type: 'charge', step: stepNo, unitId: unit.id, dir: order.dir, remaining: unit.charges });
+        const plan = chargePlan(this, unit, order.dir);
+        const path = [[unit.x, unit.y]];
+        for (const [x, y] of plan.path.slice(1)) {
+          unit.x = x;
+          unit.y = y;
+          path.push([x, y]);
+          const p = this.projectileAt(x, y);
+          if (p) {
+            // Charged into a projectile in flight.
+            this.removeProjectile(p);
+            events.push({ type: 'moved', step: stepNo, unitId: unit.id, from: path[0], to: [x, y], path });
+            this.kill(unit, { cause: 'projectile', sourceId: p.id, attackerId: p.ownerId }, events, stepNo);
+            return;
+          }
         }
+        if (path.length > 1) events.push({ type: 'moved', step: stepNo, unitId: unit.id, from: path[0], to: path[path.length - 1], path });
+        events.push({ type: 'chargeEnded', step: stepNo, unitId: unit.id, reason: plan.reason, by: plan.by });
+        // The charge ends with the unit's attack, in the charge direction.
+        const shot = this.performAttack(unit, order.dir, events, stepNo);
+        if (shot) carried.push(shot);
+        return;
       }
-      if (atk.kind === AttackKind.PROJECTILE) {
-        const p = {
-          id: s.nextProjectileId++, ownerId: unit.id, x: unit.x, y: unit.y,
-          dir: order.dir, speed: atk.speed, range: atk.range, traveled: 0,
-        };
-        s.projectiles.push(p);
-        events.push({ type: 'shot', step: stepNo, unitId: unit.id, projectileId: p.id, dir: p.dir, from: [p.x, p.y] });
-        if (this.fly(p, events, stepNo)) carried.push({ projectileId: p.id, carried: true });
-      } else if (atk.kind === AttackKind.MELEE) {
-        const cells = strikeCells(unit, order.dir, atk.reach).filter(([x, y]) => this.inBounds(x, y));
-        events.push({ type: 'strike', step: stepNo, unitId: unit.id, dir: order.dir, cells });
-        for (const [x, y] of cells) {
-          const victim = this.unitAt(x, y);
-          if (victim) this.kill(victim, { cause: 'melee', sourceId: unit.id, attackerId: unit.id }, events, stepNo);
-        }
-      }
+
+      const shot = this.performAttack(unit, order.dir, events, stepNo);
+      if (shot) carried.push(shot);
     });
 
     s.queue = carried;
@@ -331,13 +335,48 @@ export class Game {
   }
 
   /**
+   * Carry out a unit's attack in a direction (see the top of this file).
+   * Returns a carried-over queue entry for a projectile still in flight, or
+   * null.
+   */
+  performAttack(unit, dir, events, stepNo) {
+    const atk = getUnitType(unit.type).attack;
+    if (!atk) return null;
+    if (atk.blockedByAdjacentEnemy) {
+      const enemy = this.adjacentEnemy(unit);
+      if (enemy) {
+        events.push({ type: 'attackBlocked', step: stepNo, unitId: unit.id, reason: 'enemy adjacent', by: enemy.id });
+        return null;
+      }
+    }
+    if (atk.kind === AttackKind.PROJECTILE) {
+      const p = {
+        id: this.state.nextProjectileId++, ownerId: unit.id, x: unit.x, y: unit.y,
+        dir, speed: atk.speed, range: atk.range, traveled: 0,
+      };
+      this.state.projectiles.push(p);
+      events.push({ type: 'shot', step: stepNo, unitId: unit.id, projectileId: p.id, dir, from: [p.x, p.y] });
+      return this.fly(p, events, stepNo) ? { projectileId: p.id, carried: true } : null;
+    }
+    if (atk.kind === AttackKind.MELEE) {
+      const cells = strikeCells(unit, dir, atk.reach).filter(([x, y]) => this.inBounds(x, y));
+      events.push({ type: 'strike', step: stepNo, unitId: unit.id, dir, cells });
+      for (const [x, y] of cells) {
+        const victim = this.unitAt(x, y);
+        if (victim) this.kill(victim, { cause: 'melee', sourceId: unit.id, attackerId: unit.id }, events, stepNo);
+      }
+    }
+    return null;
+  }
+
+  /**
    * Walk a unit up to its speed toward the order's target. Returns true if
    * the order should carry over (not arrived, unit alive).
    */
-  walk(unit, order, events, stepNo, distance = unit.speed) {
+  walk(unit, order, events, stepNo) {
     const path = [[unit.x, unit.y]];
     let alive = true;
-    for (let k = 0; k < distance; k++) {
+    for (let k = 0; k < unit.speed; k++) {
       if (unit.x === order.x && unit.y === order.y) break;
       const next = nextStep({ x: unit.x, y: unit.y, order }, this.state);
       if (next.x === unit.x && next.y === unit.y) {
@@ -429,6 +468,44 @@ export class Game {
   hash() {
     return hashState(this.state);
   }
+}
+
+/**
+ * Where a charge in `dir` would go on the board as it stands: straight along
+ * the hex line for up to the type's charge distance, stopping early before
+ * an occupied hex (`reason: 'collided'`, `by`: that unit's id) or before
+ * unwalkable terrain or the board edge (`reason: 'terrain'`); otherwise
+ * `reason: 'full distance'`. Returns { path (including the start), end,
+ * reason, by, strike } where `strike` is the hexes the closing attack will
+ * hit if the unit's attack is melee (empty otherwise). Projectiles in flight
+ * are not considered (running into one is resolved when the charge runs).
+ */
+export function chargePlan(game, unit, dir) {
+  const def = getUnitType(unit.type);
+  const path = [[unit.x, unit.y]];
+  let [x, y] = [unit.x, unit.y];
+  let reason = 'full distance';
+  let by = null;
+  for (let k = 0; k < (def.charge?.distance ?? 0); k++) {
+    const [nx, ny] = step(x, y, dir);
+    const occupant = game.unitAt?.(nx, ny) ?? null;
+    if (occupant && occupant.id !== unit.id) {
+      reason = 'collided';
+      by = occupant.id;
+      break;
+    }
+    if (!isWalkable(game.state ?? game, nx, ny)) {
+      reason = 'terrain';
+      break;
+    }
+    [x, y] = [nx, ny];
+    path.push([x, y]);
+  }
+  const end = { x, y };
+  const strike = def.attack?.kind === AttackKind.MELEE
+    ? strikeCells(end, dir, def.attack.reach).filter(([cx, cy]) => cx >= 0 && cy >= 0 && cx < game.width && cy < game.height)
+    : [];
+  return { path, end, reason, by, strike };
 }
 
 /** The `reach` cells in a row next to a unit in a direction. */

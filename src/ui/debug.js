@@ -20,7 +20,7 @@
 // makes the CPU re-plan. "Back" restores the snapshot taken just before the
 // last "End turn", including both sides' staged orders (an exact undo).
 
-import { Game, Teams, MAX_SPEED, move, quickMove, charge, attack, TerrainTypes, DEFAULT_TERRAIN, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
+import { Game, Teams, MAX_SPEED, move, quickMove, charge, chargePlan, ALL_DIRECTIONS, attack, TerrainTypes, DEFAULT_TERRAIN, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
 import { Match, MatchStatus } from '../match.js';
 import { Renderer } from './renderer.js';
 import { scenarios } from '../scenarios.js';
@@ -249,7 +249,7 @@ export class DebugUI {
     this.hint({
       move: 'Tap a unit to select it, then tap a cell to queue a move.',
       quick: 'Quick move (once per unit): steps first, before shots fly, and wins ties. Tap a unit, then a hex.',
-      charge: 'Charge (pikemen, once each): up to 3 hexes, at the front of the queue. Tap a pikeman, then a hex.',
+      charge: 'Charge (pikemen, once each): rush up to 3 hexes in a straight line, then strike. Goes first. Tap a pikeman, then a direction.',
       attack: 'Tap one of your units, then tap a cell or unit to attack toward it.',
       add: 'Tap an empty cell to add a unit.',
       remove: 'Tap a unit to remove it.',
@@ -310,12 +310,39 @@ export class DebugUI {
           }
           break;
         }
+        case 'charge': {
+          // Like Attack mode: select a pikeman, then tap any hex or unit to
+          // charge in that direction.
+          const sel = this.selectedId !== null ? this.game.getUnit(this.selectedId) : null;
+          if (unit && unit.id === this.selectedId) {
+            this.selectedId = null;
+            this.hint('Deselected.');
+          } else if (sel && sel.charges > 0) {
+            const def = UnitTypes[sel.type];
+            const dir = nearestDirection(this.renderer, sel, x, y, def.attack?.directions ?? ALL_DIRECTIONS);
+            this.match.playerOrder(sel.id, charge(dir));
+            const plan = chargePlan(this.game, sel, dir);
+            const ends = plan.reason === 'collided' ? `into #${plan.by}` : plan.reason === 'terrain' ? 'until blocked' : `${plan.path.length - 1} hexes`;
+            this.hint(`Queued: unit ${sel.id} CHARGE ${dir} (${ends}, then strikes), at the front of the queue.`);
+          } else if (unit && unit.team === Teams.CPU) {
+            this.hint(`Unit ${unit.id} is a CPU unit.`, true);
+            return;
+          } else if (unit && !UnitTypes[unit.type].charge) {
+            this.hint(`${UnitTypes[unit.type].name} units can't charge.`, true);
+            return;
+          } else if (unit && !(unit.charges > 0)) {
+            this.hint(`Unit ${unit.id} has already used its charge.`, true);
+            return;
+          } else if (unit) {
+            this.selectedId = unit.id;
+            this.hint(`Unit ${unit.id} selected. Tap toward where it should charge (straight line, up to ${UnitTypes[unit.type].charge.distance} hexes, then it strikes).`);
+          }
+          break;
+        }
         case 'move':
         case 'quick':
-        case 'charge':
         default: {
           const quick = this.mode === 'quick';
-          const isCharge = this.mode === 'charge';
           if (unit && unit.id === this.selectedId) {
             this.selectedId = null;
             this.hint('Deselected.');
@@ -324,21 +351,13 @@ export class DebugUI {
           } else if (unit && quick && !(unit.quickMoves > 0)) {
             this.hint(`Unit ${unit.id} has already used its quick move.`, true);
             return;
-          } else if (unit && isCharge && !UnitTypes[unit.type].charge) {
-            this.hint(`${UnitTypes[unit.type].name} units can't charge.`, true);
-            return;
-          } else if (unit && isCharge && !(unit.charges > 0)) {
-            this.hint(`Unit ${unit.id} has already used its charge.`, true);
-            return;
           } else if (unit) {
             this.selectedId = unit.id;
-            const what = quick ? 'quick move (goes first)'
-              : isCharge ? `charge (up to ${UnitTypes[unit.type].charge.distance} hexes, goes first)` : 'move';
-            this.hint(`Unit ${unit.id} selected. Tap a cell to ${what}.`);
+            this.hint(`Unit ${unit.id} selected. Tap a cell to ${quick ? 'quick move (goes first)' : 'move'}.`);
           } else if (this.selectedId !== null) {
-            const order = quick ? quickMove(x, y) : isCharge ? charge(x, y) : move(x, y);
+            const order = quick ? quickMove(x, y) : move(x, y);
             this.match.playerOrder(this.selectedId, order);
-            this.hint(`Queued: unit ${this.selectedId} ${fmtOrder(order)}${quick || isCharge ? ' at the front of the queue' : ''}.`);
+            this.hint(`Queued: unit ${this.selectedId} ${fmtOrder(order)}${quick ? ' at the front of the queue' : ''}.`);
           }
         }
       }
@@ -524,7 +543,7 @@ function fmtEntry(g, e, i) {
     return `<div class="shot">${i + 1}. projectile ${e.projectileId} keeps flying ${p ? p.dir : ''} (from #${p?.ownerId})</div>`;
   }
   const u = g.getUnit(e.unitId);
-  const tag = e.order.quick || e.order.charge ? 'goes first' : e.carried ? 'continuing' : 'new';
+  const tag = e.order.quick || e.order.type === 'charge' ? 'goes first' : e.carried ? 'continuing' : 'new';
   return `<div class="${teamClass(u)}">${i + 1}. ${teamLabel(u)} #${e.unitId} ${fmtOrder(e.order)} <span class="meta">${tag}</span></div>`;
 }
 
@@ -537,7 +556,8 @@ function teamClass(u) {
 }
 
 function fmtOrder(o) {
-  if (o.type === 'move') return `${o.quick ? 'QUICK ' : ''}${o.charge ? 'CHARGE ' : ''}move(${o.x}, ${o.y})`;
+  if (o.type === 'move') return `${o.quick ? 'QUICK ' : ''}move(${o.x}, ${o.y})`;
+  if (o.type === 'charge') return `CHARGE ${o.dir}`;
   if (o.type === 'attack') return `attack(${o.dir})`;
   return o.type;
 }
@@ -570,7 +590,8 @@ function fmtEvent(e) {
     case 'arrived': return `<div class="arrived">#${e.unitId} arrived at ${e.at}</div>`;
     case 'orderStarted': return `<div class="meta">${e.step}. #${e.unitId} ${fmtOrder(e.order)}${e.carried ? ' (continued)' : ''}</div>`;
     case 'quickMove': return `<div class="quick">#${e.unitId} used its quick move (${e.remaining} left)</div>`;
-    case 'charge': return `<div class="charge">#${e.unitId} charges! (${e.remaining} left)</div>`;
+    case 'charge': return `<div class="charge">#${e.unitId} charges ${e.dir}! (${e.remaining} left)</div>`;
+    case 'chargeEnded': return `<div class="charge">#${e.unitId}'s charge ${e.reason === 'collided' ? `hit #${e.by}` : e.reason === 'terrain' ? 'was stopped by terrain / the edge' : 'went the full distance'}</div>`;
     case 'shot': return `<div class="shot">#${e.unitId} fired projectile ${e.projectileId} ${e.dir} from ${e.from}</div>`;
     case 'projectileMoved': return `<div class="shot">projectile ${e.projectileId} ${e.path.map((p) => p.join(',')).join(' → ')}</div>`;
     case 'projectileExpired': return `<div class="meta">projectile ${e.projectileId} is gone (left the board or out of range)</div>`;
