@@ -220,7 +220,13 @@ export class DebugUI {
     this.match.startTurn();
     $('#scenario').value = name;
     this.resetSession();
-    this.hint(`Loaded "${name}".`);
+    const obj = this.game.objective;
+    if (obj?.kind === 'escort') {
+      const vip = this.game.getUnit(obj.unitId);
+      this.hint(`Escort mission: get your ${UnitTypes[vip.type].name} #${vip.id} (gold star) to the flag at ${obj.to[0]},${obj.to[1]}. Lose it and you lose.`);
+    } else {
+      this.hint(`Loaded "${name}" (${this.game.width}x${this.game.height}).`);
+    }
   }
 
   resetSession() {

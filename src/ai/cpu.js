@@ -32,6 +32,8 @@
 //      the free hex in range furthest from the enemy (leaving a mine where it
 //      stood), or, at its mine limit (it can't teleport then), walk away;
 //      otherwise close in until about the teleport distance away.
+//   Escort missions: if the player is escorting a unit, the CPU heads for
+//   that unit (and firing positions on it) rather than the nearest enemy.
 //   Shooters don't plan a shot while one of theirs will still be in flight
 //   when their turn comes (maxInFlight).
 //   4. Move: projectile units head for the nearest free cell with a clear
@@ -65,6 +67,9 @@ export function planTurn(game, team) {
   const plan = [];
   const mine = game.units.filter((u) => u.team === team);
   const enemies = game.units.filter((u) => u.team !== team);
+  // Escort mission against us: the escorted unit is the priority target.
+  const obj = game.objective;
+  const vip = obj?.kind === 'escort' ? enemies.find((e) => e.id === obj.unitId) ?? null : null;
   if (enemies.length === 0) return plan;
 
   // Cells this team's units will occupy this turn (planned so far).
@@ -160,8 +165,11 @@ export function planTurn(game, team) {
       }
     }
 
-    const dest = (atk?.kind === AttackKind.PROJECTILE && firingPosition(game, u, atk, enemies, walk))
-      || (target && [target.x, target.y]);
+    // Head for the escorted unit if there is one we can reach; otherwise the nearest enemy.
+    const goal = vip && walk.has(`${vip.x},${vip.y}`) ? vip : target;
+    const dest = (atk?.kind === AttackKind.PROJECTILE
+      && ((vip && firingPosition(game, u, atk, [vip], walk)) || firingPosition(game, u, atk, enemies, walk)))
+      || (goal && [goal.x, goal.y]);
     if (dest) {
       // Moves are one turn's walk: head as far toward dest as speed allows,
       // without walking onto a mine.
@@ -199,11 +207,14 @@ function bestShot(game, u, atk) {
     const stillFlying = game.projectilesOf(u.id).filter((p) => survivesNextFlight(game, p)).length;
     if (stillFlying >= atk.maxInFlight) return null;
   }
+  // An escorted enemy unit (escort mission) is shot first, then the nearest.
+  const vipId = game.objective?.kind === 'escort' ? game.objective.unitId : null;
   let best = null;
   for (const dir of inPriorityOrder(atk.directions)) {
     const hit = firstInLine(game, u.x, u.y, dir, atk.range ?? Infinity);
     if (!hit || hit.unit.team === u.team) continue;
-    if (!best || hit.dist < best.dist) best = { dir, dist: hit.dist };
+    const vip = hit.unit.id === vipId;
+    if (!best || (vip && !best.vip) || (vip === best.vip && hit.dist < best.dist)) best = { dir, dist: hit.dist, vip };
   }
   return best?.dir ?? null;
 }

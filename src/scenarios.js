@@ -16,6 +16,63 @@ const GS = 'gunslinger';
 
 const board = (units = [], terrain = null) => new Game({ width: W, height: H, units, terrain });
 
+/** A board sized to its map (one string per row). */
+const onMap = (terrain, units, objective = null) => new Game({
+  width: [...terrain[0]].length, height: terrain.length, terrain, units, objective,
+});
+
+const PK = 'pikeman';
+const ST = 'stalker';
+const BU = 'builder';
+
+// Escort: 8 x 10. A road runs up column 3 over the only bridge; a sand ford
+// at the right edge is the other way across. The flag is at the top of the
+// road.
+const ESCORT_MAP = [
+  '...=....',
+  '..f=f...',
+  '...=....',
+  '...=..ff',
+  '~~~=~~~s',
+  '...=....',
+  'ff.=....',
+  '...=..f.',
+  '...=....',
+  '...=....',
+];
+
+// Big battle: 12 x 14. A river across the middle with three bridges, a
+// small lake on the CPU's side, roads and patches of forest and sand.
+const BATTLE_MAP = [
+  '..=.........',
+  '..=....ff...',
+  '..=....ff...',
+  '..=.........',
+  '..=...~~....',
+  '..=...~~..f.',
+  '~~=~~~~=~~=~',
+  '.f=.....=...',
+  '..=.....=...',
+  '..ss....=.ff',
+  '........=.ff',
+  '...ff...=...',
+  '........=...',
+  '........=...',
+];
+
+// Small skirmish: 5 x 6, with a couple of water hexes for cover.
+const SMALL_MAP = [
+  '.....',
+  '..f..',
+  '.~...',
+  '...~.',
+  '..f..',
+  '.....',
+];
+
+/** Mirror a list of player units to the CPU side of a board of the given height. */
+const mirror = (units, height) => units.map((u) => ({ ...u, y: height - 1 - u.y, team: C }));
+
 // Terrain maps: one string per row, one character per hex (src/data/terrain.json):
 //   . grass   = road   f forest   s sand   ~ water (units can't walk on it)
 const RIVER_MAP = [
@@ -55,6 +112,37 @@ export const scenarios = {
     { x: 1, y: 7, type: GS, team: P }, { x: 3, y: 6, type: 'stalker', team: P }, { x: 4, y: 7, team: P }, { x: 6, y: 7, type: GS, team: P },
     { x: 1, y: 0, type: GS, team: C }, { x: 3, y: 0, type: 'stalker', team: C }, { x: 4, y: 0, team: C }, { x: 6, y: 0, type: GS, team: C },
   ]),
+
+  'Escort the builder': () => {
+    // Win by getting builder #1 to the flag at the top of the road (3,0);
+    // lose if it dies. CPU gunslingers cover the road; buildings stop shots,
+    // so the builder can put up cover on the way. The CPU goes for the builder.
+    const player = [
+      { x: 3, y: 9, type: BU }, // #1: the unit to escort
+      { x: 2, y: 8, type: PK }, { x: 4, y: 8, type: PK },
+      { x: 5, y: 9, type: GS }, { x: 0, y: 9, type: ST },
+    ];
+    const cpu = [
+      { x: 1, y: 0, type: GS }, { x: 6, y: 1, type: GS },
+      { x: 2, y: 2, type: PK }, { x: 5, y: 2, type: PK }, { x: 4, y: 0, type: ST },
+    ].map((u) => ({ ...u, team: C }));
+    return onMap(ESCORT_MAP, [...player, ...cpu], { kind: 'escort', unitId: 1, to: [3, 0] });
+  },
+
+  'Big battle (12x14)': () => {
+    const player = [
+      { x: 3, y: 12, type: PK }, { x: 5, y: 12, type: PK }, { x: 7, y: 12, type: PK }, { x: 9, y: 12, type: PK },
+      { x: 2, y: 13, type: GS }, { x: 6, y: 13, type: GS }, { x: 10, y: 13, type: GS },
+      { x: 4, y: 13, type: ST }, { x: 8, y: 13, type: ST },
+      { x: 11, y: 13, type: BU },
+    ];
+    return onMap(BATTLE_MAP, [...player, ...mirror(player, BATTLE_MAP.length)]);
+  },
+
+  'Small skirmish (5x6)': () => {
+    const player = [{ x: 1, y: 5, type: PK }, { x: 4, y: 5, type: GS }];
+    return onMap(SMALL_MAP, [...player, { x: 3, y: 0, type: PK, team: C }, { x: 0, y: 0, type: GS, team: C }]);
+  },
 
   'Duel vs CPU': () => board([{ x: 0, y: 7, type: GS, team: P }, { x: 7, y: 0, type: GS, team: C }]),
 

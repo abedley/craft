@@ -46,7 +46,7 @@ html, body {
 .status b { color: var(--text); font-weight: 600; }
 .hash b { font-family: ui-monospace, Menlo, monospace; }
 
-#board-wrap { width: 100%; aspect-ratio: 1; }
+#board-wrap { width: 100%; aspect-ratio: 1; max-height: 64vh; }
 #board {
   display: block;
   width: 100%;

@@ -18,6 +18,11 @@
 //   2. The player stages orders for their own units (playerOrder()).
 //   3. endTurn(): runs the queue (one engine tick), then starts the next turn.
 //
+// Win / lose: by default, wipe out the other side. A game can also carry an
+// objective (game.objective). Supported: { kind: 'escort', unitId, to: [x, y] }
+// - the player wins when that unit stands on `to`, and loses if it dies (or
+// if all their units do). Wiping out the CPU still wins.
+//
 // All match state lives in the Game state (the CPU's staged orders are just
 // queue entries), so a Game snapshot is a complete save and undo is exact.
 
@@ -45,6 +50,13 @@ export class Match {
   get status() {
     if (!this.vsCpu) return MatchStatus.PLAYING;
     const alive = (team) => this.game.units.some((u) => u.team === team);
+    // Escort mission: get one unit to a target hex. Losing it loses the game.
+    const obj = this.game.objective;
+    if (obj?.kind === 'escort') {
+      const vip = this.game.getUnit(obj.unitId);
+      if (!vip) return MatchStatus.LOST;
+      if (vip.x === obj.to[0] && vip.y === obj.to[1]) return MatchStatus.WON;
+    }
     const player = alive(Teams.PLAYER);
     const cpu = alive(Teams.CPU);
     if (!player && !cpu) return MatchStatus.DRAW;

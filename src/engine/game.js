@@ -93,7 +93,7 @@ export class Game {
    *   terrain: one string per row, one character per hex, using each terrain
    *   type's "char" (see terrain.js), e.g. "..==~~..". Omit for all-default.
    */
-  constructor({ width, height, units = [], terrain = null }) {
+  constructor({ width, height, units = [], terrain = null, objective = null }) {
     if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
       throw new Error('Grid width and height must be positive integers');
     }
@@ -114,6 +114,9 @@ export class Game {
       queue: [], // see the top of this file
       // Terrain type key per hex, row-major: terrain[y * width + x].
       terrain: parseTerrain(terrain, width, height),
+      // Optional mission objective, read by match.js, e.g.
+      // { kind: 'escort', unitId: 1, to: [4, 0] }.
+      objective: objective ? structuredClone(objective) : null,
     };
     for (const u of units) this.addUnit(u.x, u.y, u.id, { type: u.type, team: u.team, speed: u.speed });
   }
@@ -131,6 +134,7 @@ export class Game {
     game.state = structuredClone(snapshot);
     game.state.mines ??= [];
     game.state.buildings ??= [];
+    game.state.objective ??= null;
     game.state.nextBuildingId ??= 1;
     for (const u of game.state.units) u.channel ??= null;
     game.state.nextMineId ??= 1;
@@ -155,6 +159,7 @@ export class Game {
   get projectiles() { return this.state.projectiles; }
   get queue() { return this.state.queue; }
   get terrain() { return this.state.terrain; }
+  get objective() { return this.state.objective; }
 
   getUnit(id) {
     return this.state.units.find((u) => u.id === id) ?? null;

@@ -26,6 +26,7 @@ const COLORS = {
   shotLine: 'rgba(255,169,77,0.8)',
   quick: '#6ff2ff',
   charge: '#c49bff',
+  objective: '#f4c542',
   label: '#0d1014',
 };
 
@@ -115,6 +116,13 @@ export class Renderer {
         ctx.stroke();
         if (!terrain.walkable) this.drawUnwalkable(cx, cy);
       }
+    }
+
+    // Mission objective: the escort target hex gets a gold outline and flag.
+    const obj = game.objective;
+    if (obj?.kind === 'escort') {
+      const [cx, cy] = this.center(obj.to[0], obj.to[1]);
+      this.drawFlag(cx, cy);
     }
 
     // Buildings: a tinted hex with a small house, in the owning team's colour.
@@ -217,6 +225,15 @@ export class Renderer {
       if (u.channel) this.drawProgress(cx, cy, r + 6, u.channel.progress / (UnitTypes[u.type].build?.turns ?? 1), unitColor(u));
       if (u.quickMoves > 0) this.drawQuickPip(cx - r * 0.8, cy + r * 0.8);
       if (u.charges > 0) this.drawChargePip(cx - r * 0.8, cy - r * 0.8);
+    }
+
+    // The unit being escorted gets a gold star.
+    if (obj?.kind === 'escort') {
+      const vip = game.getUnit(obj.unitId);
+      if (vip) {
+        const [cx, cy] = this.center(vip.x, vip.y);
+        this.drawStar(cx, cy - cell * 0.42, cell * 0.13);
+      }
     }
 
     // Building badges go above units so a unit standing on one doesn't hide it.
@@ -409,6 +426,55 @@ export class Renderer {
     ctx.closePath();
     ctx.fill();
     ctx.fillRect(hx - s * 0.7, hy - s * 0.1, s * 1.4, s * 0.9);
+    ctx.restore();
+  }
+
+  /** Escort target: gold hex outline with a flag. */
+  drawFlag(cx, cy) {
+    const { ctx, size } = this;
+    ctx.save();
+    ctx.strokeStyle = COLORS.objective;
+    ctx.lineWidth = 3;
+    ctx.setLineDash([6, 4]);
+    this.hexPath(cx, cy, size - 3);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const px = cx - size * 0.25;
+    const top = cy - size * 0.55;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(px, top);
+    ctx.lineTo(px, cy + size * 0.45);
+    ctx.stroke();
+    ctx.fillStyle = COLORS.objective;
+    ctx.beginPath();
+    ctx.moveTo(px, top);
+    ctx.lineTo(px + size * 0.55, top + size * 0.18);
+    ctx.lineTo(px, top + size * 0.36);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** A small five-pointed star (marks the unit being escorted). */
+  drawStar(cx, cy, r) {
+    const { ctx } = this;
+    ctx.save();
+    ctx.fillStyle = COLORS.objective;
+    ctx.strokeStyle = COLORS.label;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let k = 0; k < 10; k++) {
+      const a = -Math.PI / 2 + (Math.PI / 5) * k;
+      const rr = k % 2 === 0 ? r : r * 0.45;
+      const x = cx + Math.cos(a) * rr;
+      const y = cy + Math.sin(a) * rr;
+      if (k === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
     ctx.restore();
   }
 

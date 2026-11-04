@@ -69,6 +69,13 @@ speed.
 `match.status` is `playing`, `won` (no CPU units left), `lost` (no player units left) or `draw` (both
 wiped out in the same tick). Boards with no CPU units are sandboxes and never end.
 
+**Missions:** a board can carry an objective (`new Game({ ..., objective })`, kept in the saved
+state). The one supported so far is an **escort**:
+`{ kind: 'escort', unitId: 1, to: [3, 0] }`. You **win** when that unit stands on the target hex, and
+**lose** if it dies (wiping out the CPU still wins). The CPU treats the escorted unit as its priority
+target: it shoots it first when it has a line, and heads for it rather than the nearest unit. The
+board shows the target hex with a gold flag and the escorted unit with a gold star.
+
 ### Charge (pikemen)
 
 Pikemen have a **charge** (`charge(dir)`): they rush **in a straight line** in one of the 6 hex
@@ -351,7 +358,16 @@ UI header, so two runs with the same orders can be compared at a glance.
 
 ## Debug UI
 
-- Starts on **Skirmish vs CPU** (a river with two bridges; **Open field vs CPU** has no terrain). CPU orders are already staged when your turn starts (pink dashed
+- Starts on **Skirmish vs CPU** (a river with two bridges; **Open field vs CPU** has no terrain).
+  Other matches:
+  - **Escort the builder** (8×10): get your builder (gold star) to the flag at the top of the road,
+    over the only bridge, past CPU gunslingers covering the road. Its buildings stop shots, so it
+    can build cover on the way.
+  - **Big battle (12×14)**: 10 units a side (4 pikemen, 3 gunslingers, 2 stalkers, a builder) on a
+    big map with a three-bridge river, a lake, roads and forest.
+  - **Small skirmish (5×6)**: a pikeman and a gunslinger each on a tiny board: fast and sharp.
+  Boards can be any size; scenarios with a map take their size from it. The board scales to fit
+  the phone screen (at most about two-thirds of its height). CPU orders are already staged when your turn starts (pink dashed
   lines, listed first in the Queue tab); tap **End turn** when your orders are in. The header shows
   YOU WIN / YOU LOSE / DRAW when a side is wiped out.
 - **Move** mode: tap one of your units to select it (the hexes it can reach this turn light up),
