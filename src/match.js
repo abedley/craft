@@ -4,8 +4,8 @@
 // ends, the queue runs front to back and each entry happens in full before
 // the next. How it's built each turn:
 //
-//   - It starts empty; projectiles still in flight from last turn are added
-//     first, in the order they ran.
+//   - It starts empty; projectiles still in flight and builders' channels
+//     from last turn are added first, in the order they ran.
 //   - New orders join the end, in the order they're given. The CPU stages
 //     its whole plan at the start of the turn, so its orders go in before the
 //     player's.
@@ -74,9 +74,9 @@ export class Match {
     this.game.queueOrder(unitId, order);
   }
 
-  /** Remove the player's orders this turn. */
+  /** Remove the player's new orders this turn (a channel in progress carries on). */
   clearPlayerOrders() {
-    this.game.clearQueue(Teams.PLAYER);
+    this.game.clearQueue(Teams.PLAYER, { keepCarried: true });
   }
 
   /** Resolve the turn (one tick), then let the CPU stage the next one. */

@@ -5,7 +5,7 @@
 // The board is flat-topped hexes (see engine/hex.js). Columns are straight
 // up/down lines, so most demos run down column 3.
 
-import { Game, move, attack, charge, teleport } from './engine/index.js';
+import { Game, move, attack, charge, teleport, build } from './engine/index.js';
 
 const W = 8;
 const H = 8;
@@ -190,6 +190,16 @@ export const scenarios = {
     g.getUnit(2).charges = 0;
     g.queueOrder(1, teleport(5, 3));
     g.queueOrder(2, move(3, 3));
+    return g;
+  },
+
+  'Builder: build': () => {
+    // Builder 1 channels for two turns (End turn twice) and a building appears
+    // on its hex. Then try walking units through it: your pikeman 2 can, the
+    // CPU's pikeman 3 has to go round.
+    const g = board([{ x: 3, y: 4, type: 'builder' }, { x: 3, y: 6 }, { x: 7, y: 0, team: C }]);
+    g.getUnit(3).charges = 0;
+    g.queueOrder(1, build());
     return g;
   },
 

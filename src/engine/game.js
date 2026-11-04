@@ -12,8 +12,8 @@
 // An entry may also carry `carried: true` (a projectile from last turn).
 //
 // How the queue is built each turn (see queueOrder):
-//   - It starts empty. Projectiles still in flight from last turn are added
-//     first, in the order they ran.
+//   - It starts empty. Projectiles still in flight and builders' channels
+//     from last turn are added first, in the order they ran.
 //   - Every new order joins the END of the queue, in the order given. (In a
 //     match the CPU stages its plan at the start of the turn, so its orders
 //     are added before the player's; see match.js.)
@@ -56,6 +56,14 @@
 //               while it already has its maximum of mines (2) on the board.
 //   projectile  (carried over) flies another `speed` hexes the same way.
 //
+// Build (builders): the unit channels on its own hex for its type's `build`
+// turns (2). Each turn its build entry adds one turn of progress and, until
+// done, carries itself over to the next turn's queue (with the projectiles,
+// at the start). On the last turn a building appears on that hex. Giving the
+// unit any other order breaks the channel and its progress is lost.
+// Buildings: allied units can walk on or through them; to enemy units they
+// are impassable, like water. Shots, strikes and mines ignore them.
+//
 // Mines: any unit (either team, the stalker too) that moves onto a mined hex
 // by walking, charging through or teleporting onto it, sets it off and is
 // killed; the mine is used up. Shots fly over mines.
@@ -95,9 +103,11 @@ export class Game {
       nextUnitId: 1,
       nextProjectileId: 1,
       nextMineId: 1,
+      nextBuildingId: 1,
       units: [], // kept sorted by id
       projectiles: [], // kept sorted by id
       mines: [], // [{ id, x, y, ownerId, team }] (see teleport)
+      buildings: [], // [{ id, x, y, team, builderId }] (see build)
       queue: [], // see the top of this file
       // Terrain type key per hex, row-major: terrain[y * width + x].
       terrain: parseTerrain(terrain, width, height),
@@ -117,6 +127,9 @@ export class Game {
     }
     game.state = structuredClone(snapshot);
     game.state.mines ??= [];
+    game.state.buildings ??= [];
+    game.state.nextBuildingId ??= 1;
+    for (const u of game.state.units) u.channel ??= null;
     game.state.nextMineId ??= 1;
     for (const u of game.state.units) u.teleports ??= getUnitType(u.type).teleport ? (getUnitType(u.type).teleport.uses ?? null) : 0;
     return game;
@@ -153,6 +166,11 @@ export class Game {
   }
 
   get mines() { return this.state.mines; }
+  get buildings() { return this.state.buildings; }
+
+  buildingAt(x, y) {
+    return this.state.buildings.find((b) => b.x === x && b.y === y) ?? null;
+  }
 
   /** Mines on the board laid by this unit. */
   minesOf(unitId) {
@@ -188,9 +206,19 @@ export class Game {
     return this.state.terrain[y * this.state.width + x];
   }
 
-  /** Can a unit stand on this hex (on the board and walkable terrain)? */
-  isWalkable(x, y) {
-    return isWalkable(this.state, x, y);
+  /**
+   * Can a unit stand on this hex (on the board and walkable terrain)? With a
+   * team: and not the other team's building.
+   */
+  isWalkable(x, y, team = null) {
+    return isWalkable(this.state, x, y, team);
+  }
+
+  /** Why a unit of `team` can't stand on (x, y), for error messages. */
+  notWalkableReason(x, y, team = null) {
+    if (!this.inBounds(x, y)) return 'off the board';
+    if (!getTerrainType(this.terrainAt(x, y)).walkable) return getTerrainType(this.terrainAt(x, y)).name;
+    return 'an enemy building';
   }
 
   inBounds(x, y) {
@@ -227,7 +255,7 @@ export class Game {
     validateSpeed(speed);
     if (!Object.values(Teams).includes(team)) throw new Error(`Unknown team "${team}"`);
     if (this.unitAt(x, y)) throw new Error(`Cell ${x},${y} is occupied`);
-    if (!this.isWalkable(x, y)) throw new Error(`Units can't stand on ${getTerrainType(this.terrainAt(x, y)).name}`);
+    if (!this.isWalkable(x, y, team)) throw new Error(`Units can't stand on ${this.notWalkableReason(x, y, team)}`);
     const unitId = id ?? this.state.nextUnitId;
     if (this.getUnit(unitId)) throw new Error(`Unit id ${unitId} already exists`);
     this.state.nextUnitId = Math.max(this.state.nextUnitId, unitId + 1);
@@ -237,6 +265,8 @@ export class Game {
       charges: def.charge?.uses ?? 0,
       // Teleports left: null = unlimited, 0 = none.
       teleports: def.teleport ? (def.teleport.uses ?? null) : 0,
+      // A multi-turn action in progress, e.g. { kind: 'build', progress: 1 }.
+      channel: null,
     };
     this.state.units.push(unit);
     this.state.units.sort((a, b) => a.id - b.id);
@@ -273,12 +303,13 @@ export class Game {
     const err = validateOrder(order, this.state, getUnitType(unit.type));
     if (err) throw new Error(`Invalid order: ${err}`);
     if (order.type === OrderType.MOVE) {
-      if (!this.isWalkable(order.x, order.y)) {
-        throw new Error(`Invalid order: units can't walk on ${getTerrainType(this.terrainAt(order.x, order.y)).name}`);
+      if (!this.isWalkable(order.x, order.y, unit.team)) {
+        throw new Error(`Invalid order: units can't walk on ${this.notWalkableReason(order.x, order.y, unit.team)}`);
       }
       // One turn's walk at most: the target must be within the unit's speed
-      // (walking distance around terrain; other units don't count).
-      const d = distancesTo(this.state, order.x, order.y).get(`${unit.x},${unit.y}`);
+      // (walking distance around terrain and enemy buildings; other units
+      // don't count).
+      const d = distancesTo(this.state, order.x, order.y, unit.team).get(`${unit.x},${unit.y}`);
       if (d === undefined) throw new Error(`Invalid order: unit ${unitId} has no route to ${order.x},${order.y}`);
       if (d > unit.speed) {
         throw new Error(`Invalid order: too far. Unit ${unitId} can move up to ${unit.speed} hex${unit.speed === 1 ? '' : 'es'} this turn (${order.x},${order.y} is ${d} away)`);
@@ -287,14 +318,17 @@ export class Game {
     if (order.type === OrderType.TELEPORT) {
       const tp = getUnitType(unit.type).teleport;
       if (unit.teleports === 0) throw new Error(`Unit ${unitId} has no teleport left`);
-      if (!this.isWalkable(order.x, order.y)) {
-        throw new Error(`Invalid order: units can't stand on ${getTerrainType(this.terrainAt(order.x, order.y)).name}`);
+      if (!this.isWalkable(order.x, order.y, unit.team)) {
+        throw new Error(`Invalid order: units can't stand on ${this.notWalkableReason(order.x, order.y, unit.team)}`);
       }
       const d = hexDistance(unit.x, unit.y, order.x, order.y);
       if (d === 0) throw new Error('Invalid order: teleport somewhere else');
       if (d > tp.distance) {
         throw new Error(`Invalid order: too far. Unit ${unitId} can teleport up to ${tp.distance} hexes (${order.x},${order.y} is ${d} away)`);
       }
+    }
+    if (order.type === OrderType.BUILD && this.buildingAt(unit.x, unit.y)) {
+      throw new Error(`Invalid order: there's already a building at ${unit.x},${unit.y}`);
     }
     if (order.quick && !(unit.quickMoves > 0)) throw new Error(`Unit ${unitId} has no quick move left`);
     if (order.type === OrderType.CHARGE && !(unit.charges > 0)) throw new Error(`Unit ${unitId} has no charge left`);
@@ -307,11 +341,13 @@ export class Game {
 
   /**
    * Remove unit orders from the queue; with a team, only that team's.
-   * Projectiles in flight are never removed.
+   * Projectiles in flight are never removed. With `keepCarried`, orders
+   * carried over from last turn (a builder's channel) are kept too.
    */
-  clearQueue(team = null) {
+  clearQueue(team = null, { keepCarried = false } = {}) {
     this.state.queue = this.state.queue.filter((e) => {
       if (e.projectileId !== undefined) return true;
+      if (keepCarried && e.carried) return true;
       return team !== null && this.getUnit(e.unitId)?.team !== team;
     });
   }
@@ -329,6 +365,7 @@ export class Game {
     const s = this.state;
     const events = [];
     const carried = [];
+    const channelled = new Set(); // units whose channel continued this turn
 
     s.queue.forEach((entry, i) => {
       const stepNo = i + 1;
@@ -352,6 +389,27 @@ export class Game {
           events.push({ type: 'quickMove', step: stepNo, unitId: unit.id, remaining: unit.quickMoves });
         }
         this.walk(unit, order, events, stepNo);
+        return;
+      }
+
+      if (order.type === OrderType.BUILD) {
+        const turns = getUnitType(unit.type).build.turns;
+        if (this.buildingAt(unit.x, unit.y)) {
+          events.push({ type: 'blocked', step: stepNo, unitId: unit.id, at: [unit.x, unit.y], reason: 'already built', by: null });
+          return;
+        }
+        const progress = (unit.channel?.kind === 'build' ? unit.channel.progress : 0) + 1;
+        channelled.add(unit.id);
+        if (progress < turns) {
+          unit.channel = { kind: 'build', progress };
+          events.push({ type: 'channeling', step: stepNo, unitId: unit.id, kind: 'build', progress, of: turns });
+          carried.push({ unitId: unit.id, order, carried: true });
+        } else {
+          unit.channel = null;
+          const b = { id: s.nextBuildingId++, x: unit.x, y: unit.y, team: unit.team, builderId: unit.id };
+          s.buildings.push(b);
+          events.push({ type: 'built', step: stepNo, unitId: unit.id, buildingId: b.id, at: [b.x, b.y] });
+        }
         return;
       }
 
@@ -408,6 +466,15 @@ export class Game {
       const shot = this.performAttack(unit, order.dir, events, stepNo);
       if (shot) carried.push(shot);
     });
+
+    // A channel that wasn't continued this turn (the unit was given another
+    // order) is broken: its progress is lost.
+    for (const u of s.units) {
+      if (u.channel && !channelled.has(u.id)) {
+        events.push({ type: 'channelBroken', unitId: u.id, kind: u.channel.kind, progress: u.channel.progress });
+        u.channel = null;
+      }
+    }
 
     s.queue = carried;
     s.tick += 1;
@@ -466,7 +533,7 @@ export class Game {
     let alive = true;
     for (let k = 0; k < unit.speed; k++) {
       if (unit.x === order.x && unit.y === order.y) break;
-      const next = nextStep({ x: unit.x, y: unit.y, order }, this.state);
+      const next = nextStep({ x: unit.x, y: unit.y, team: unit.team, order }, this.state);
       if (next.x === unit.x && next.y === unit.y) {
         events.push({ type: 'blocked', step: stepNo, unitId: unit.id, at: [unit.x, unit.y], reason: 'no route', by: null });
         break;
@@ -604,7 +671,7 @@ export function chargePlan(game, unit, dir) {
       by = occupant.id;
       break;
     }
-    if (!isWalkable(game.state ?? game, nx, ny)) {
+    if (!isWalkable(game.state ?? game, nx, ny, unit.team ?? null)) {
       reason = 'terrain';
       break;
     }
@@ -645,7 +712,8 @@ function validateSpeed(speed) {
  * avoided: a blocked unit tries again on its next step. If the target can't
  * be reached at all, the unit stays put.
  *
- * @param {{x:number,y:number,order:object|null}} unit
+ * @param {{x:number,y:number,order:object|null,team?:string}} unit (with a
+ *   team, the other team's buildings are avoided)
  * @param {{width:number,height:number,terrain?:string[]}} [board] a Game or
  *   its state; omit for an unbounded, all-walkable plane
  */
@@ -657,7 +725,7 @@ export function nextStep(unit, board = null) {
   const [lx, ly] = hexLineStep(unit.x, unit.y, o.x, o.y);
   if (!board) return { x: lx, y: ly };
 
-  const dist = distancesTo(board, o.x, o.y);
+  const dist = distancesTo(board, o.x, o.y, unit.team ?? null);
   const here = dist.get(`${unit.x},${unit.y}`);
   if (here === undefined) return stay; // unreachable
   if (dist.get(`${lx},${ly}`) === here - 1) return { x: lx, y: ly };
@@ -678,7 +746,7 @@ export function nextStep(unit, board = null) {
 export function walkToward(board, unit, tx, ty, steps = unit.speed) {
   const order = { type: OrderType.MOVE, x: tx, y: ty };
   const occupied = (x, y) => board.units?.some((u) => u.id !== unit.id && u.x === x && u.y === y);
-  let cur = { x: unit.x, y: unit.y, order };
+  let cur = { x: unit.x, y: unit.y, team: unit.team, order };
   for (let k = 0; k < steps; k++) {
     const next = nextStep(cur, board.state ?? board);
     if (next.x === cur.x && next.y === cur.y) break;
@@ -688,21 +756,29 @@ export function walkToward(board, unit, tx, ty, steps = unit.speed) {
   return [cur.x, cur.y];
 }
 
-/** Is (x, y) on the board and walkable? Works on a Game or its state. */
-export function isWalkable(board, x, y) {
+/**
+ * Is (x, y) on the board and walkable? Works on a Game or its state. With a
+ * team, the other team's buildings count as unwalkable too (allies can walk
+ * on or through their own side's buildings).
+ */
+export function isWalkable(board, x, y, team = null) {
   if (x < 0 || y < 0 || x >= board.width || y >= board.height) return false;
   const t = board.terrain?.[y * board.width + x];
-  return t === undefined || getTerrainType(t).walkable;
+  if (t !== undefined && !getTerrainType(t).walkable) return false;
+  if (team !== null && board.buildings?.some((b) => b.x === x && b.y === y && b.team !== team)) return false;
+  return true;
 }
 
 /**
  * Walking distance (hex steps over walkable terrain) from every hex that can
  * reach (tx, ty), as a Map "x,y" -> steps. Breadth-first search from the
- * target; units are ignored. Empty if the target itself isn't walkable.
+ * target; units are ignored. With a team, the other team's buildings are
+ * impassable. Empty if the target itself isn't walkable.
  */
-export function distancesTo(board, tx, ty) {
+export function distancesTo(board, tx, ty, team = null) {
+  board = board.state ?? board;
   const dist = new Map();
-  if (!isWalkable(board, tx, ty)) return dist;
+  if (!isWalkable(board, tx, ty, team)) return dist;
   dist.set(`${tx},${ty}`, 0);
   const frontier = [[tx, ty]];
   for (let i = 0; i < frontier.length; i++) {
@@ -710,7 +786,7 @@ export function distancesTo(board, tx, ty) {
     const d = dist.get(`${cx},${cy}`);
     for (const [, nx, ny] of neighbors(cx, cy)) {
       const k = `${nx},${ny}`;
-      if (dist.has(k) || !isWalkable(board, nx, ny)) continue;
+      if (dist.has(k) || !isWalkable(board, nx, ny, team)) continue;
       dist.set(k, d + 1);
       frontier.push([nx, ny]);
     }

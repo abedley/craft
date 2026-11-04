@@ -20,7 +20,7 @@
 // makes the CPU re-plan. "Back" restores the snapshot taken just before the
 // last "End turn", including both sides' staged orders (an exact undo).
 
-import { Game, Teams, MAX_SPEED, move, quickMove, charge, teleport, chargePlan, distancesTo, distance, ALL_DIRECTIONS, attack, TerrainTypes, DEFAULT_TERRAIN, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
+import { Game, Teams, MAX_SPEED, move, quickMove, charge, teleport, build, chargePlan, distancesTo, distance, ALL_DIRECTIONS, attack, TerrainTypes, DEFAULT_TERRAIN, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
 import { Match, MatchStatus } from '../match.js';
 import { Renderer } from './renderer.js';
 import { scenarios } from '../scenarios.js';
@@ -249,7 +249,7 @@ export class DebugUI {
     this.hint({
       move: 'Tap a unit to select it, then tap a cell to queue a move.',
       quick: 'Quick move (once per unit): steps first, before shots fly, and wins ties. Tap a unit, then a hex.',
-      ability: 'Abilities: a pikeman CHARGES (tap a direction; once, goes first); a stalker TELEPORTS up to 3 hexes, leaving a mine (tap a hex).',
+      ability: 'Abilities: pikeman CHARGES (tap a direction; once, goes first); stalker TELEPORTS up to 3, leaving a mine (tap a hex); builder BUILDS on its hex (one tap).',
       attack: 'Tap one of your units, then tap a cell or unit to attack toward it.',
       add: 'Tap an empty cell to add a unit.',
       remove: 'Tap a unit to remove it.',
@@ -345,6 +345,15 @@ export class DebugUI {
           } else if (unit && unit.team === Teams.CPU) {
             this.hint(`Unit ${unit.id} is a CPU unit.`, true);
             return;
+          } else if (unit && UnitTypes[unit.type].build) {
+            // Builders: one tap queues the build on their own hex.
+            if (unit.channel) {
+              this.hint(`Unit ${unit.id} is already building (${unit.channel.progress}/${UnitTypes[unit.type].build.turns}); it carries on by itself.`);
+            } else {
+              this.match.playerOrder(unit.id, build());
+              this.hint(`Queued: unit ${unit.id} BUILD at ${unit.x},${unit.y} (channels for ${UnitTypes[unit.type].build.turns} turns; any other order cancels it).`);
+            }
+            this.selectedId = null;
           } else if (unit && !hasAbility(unit)) {
             const d = UnitTypes[unit.type];
             this.hint(d.charge || d.teleport ? `Unit ${unit.id} has used up its ability.` : `${d.name} units have no ability.`, true);
@@ -488,14 +497,14 @@ export class DebugUI {
       for (let x = 0; x < this.game.width; x++) {
         for (let y = 0; y < this.game.height; y++) {
           const d = distance(u.x, u.y, x, y);
-          if (d > 0 && d <= tp.distance && this.game.isWalkable(x, y) && !this.game.unitAt(x, y)) cells.push([x, y]);
+          if (d > 0 && d <= tp.distance && this.game.isWalkable(x, y, u.team) && !this.game.unitAt(x, y)) cells.push([x, y]);
         }
       }
       return cells;
     }
     if (this.mode !== 'move' && this.mode !== 'quick') return null;
     const cells = [];
-    for (const [k, d] of distancesTo(this.game, u.x, u.y)) {
+    for (const [k, d] of distancesTo(this.game, u.x, u.y, u.team)) {
       if (d > 0 && d <= u.speed) cells.push(k.split(',').map(Number));
     }
     return cells;
@@ -565,7 +574,7 @@ export class DebugUI {
         const el = $('#tab-units');
         const projLines = g.projectiles.map((p) => `<div class="shot">projectile ${p.id} @ ${p.x},${p.y} → ${p.dir} (from #${p.ownerId})</div>`).join('');
         el.innerHTML = projLines + (g.units.length
-          ? g.units.map((u) => `<div class="${teamClass(u)}">${teamLabel(u)} #${u.id} ${UnitTypes[u.type].name} @ ${u.x},${u.y} spd ${u.speed}${u.quickMoves > 0 ? ' ⚡' : ''}${u.charges > 0 ? ' »' : ''}${u.teleports !== 0 && UnitTypes[u.type].teleport ? ` ⇢ mines ${g.minesOf(u.id).length}${UnitTypes[u.type].teleport.maxMines ? `/${UnitTypes[u.type].teleport.maxMines}` : ''}` : ''} ${g.orderFor(u.id) ? fmtOrder(g.orderFor(u.id)) : '<span class="meta">idle</span>'}</div>`).join('')
+          ? g.units.map((u) => `<div class="${teamClass(u)}">${teamLabel(u)} #${u.id} ${UnitTypes[u.type].name} @ ${u.x},${u.y} spd ${u.speed}${u.quickMoves > 0 ? ' ⚡' : ''}${u.charges > 0 ? ' »' : ''}${u.channel ? ` building ${u.channel.progress}/${UnitTypes[u.type].build.turns}` : ''}${u.teleports !== 0 && UnitTypes[u.type].teleport ? ` ⇢ mines ${g.minesOf(u.id).length}${UnitTypes[u.type].teleport.maxMines ? `/${UnitTypes[u.type].teleport.maxMines}` : ''}` : ''} ${g.orderFor(u.id) ? fmtOrder(g.orderFor(u.id)) : '<span class="meta">idle</span>'}</div>`).join('')
           : '<div class="empty">No units.</div>');
         break;
       }
@@ -585,7 +594,7 @@ function fmtEntry(g, e, i) {
     return `<div class="shot">${i + 1}. projectile ${e.projectileId} keeps flying ${p ? p.dir : ''} (from #${p?.ownerId})</div>`;
   }
   const u = g.getUnit(e.unitId);
-  const tag = e.order.quick || e.order.type === 'charge' ? 'goes first' : 'new';
+  const tag = e.order.quick || e.order.type === 'charge' ? 'goes first' : e.carried ? `channelling ${u?.channel ? `${u.channel.progress}/${UnitTypes[u.type].build?.turns}` : ''}` : 'new';
   return `<div class="${teamClass(u)}">${i + 1}. ${teamLabel(u)} #${e.unitId} ${fmtOrder(e.order)} <span class="meta">${tag}</span></div>`;
 }
 
@@ -601,13 +610,14 @@ function teamClass(u) {
 function hasAbility(u) {
   if (!u) return false;
   const d = UnitTypes[u.type];
-  return !!((d.charge && u.charges > 0) || (d.teleport && u.teleports !== 0));
+  return !!((d.charge && u.charges > 0) || (d.teleport && u.teleports !== 0) || d.build);
 }
 
 function fmtOrder(o) {
   if (o.type === 'move') return `${o.quick ? 'QUICK ' : ''}move(${o.x}, ${o.y})`;
   if (o.type === 'charge') return `CHARGE ${o.dir}`;
   if (o.type === 'teleport') return `TELEPORT to ${o.x},${o.y}`;
+  if (o.type === 'build') return 'BUILD';
   if (o.type === 'attack') return `attack(${o.dir})`;
   return o.type;
 }
@@ -643,6 +653,9 @@ function fmtEvent(e) {
     case 'charge': return `<div class="charge">#${e.unitId} charges ${e.dir}! (${e.remaining} left)</div>`;
     case 'teleported': return `<div class="charge">#${e.unitId} teleports ${e.from} → ${e.to}</div>`;
     case 'minePlaced': return `<div class="meta">#${e.unitId} leaves mine ${e.mineId} at ${e.at}</div>`;
+    case 'channeling': return `<div class="meta">#${e.unitId} builds… (${e.progress}/${e.of})</div>`;
+    case 'built': return `<div class="arrived">#${e.unitId} finished building ${e.buildingId} at ${e.at}</div>`;
+    case 'channelBroken': return `<div class="blocked">#${e.unitId} stopped building (progress lost)</div>`;
     case 'mineExploded': return `<div class="killed">mine ${e.mineId} explodes under #${e.unitId} at ${e.at}</div>`;
     case 'chargeEnded': return `<div class="charge">#${e.unitId}'s charge ${e.reason === 'collided' ? `hit #${e.by}` : e.reason === 'terrain' ? 'was stopped by terrain / the edge' : 'went the full distance'}</div>`;
     case 'shot': return `<div class="shot">#${e.unitId} fired projectile ${e.projectileId} ${e.dir} from ${e.from}</div>`;

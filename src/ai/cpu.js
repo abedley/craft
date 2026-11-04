@@ -25,6 +25,9 @@
 //   3. Charge (melee units with charges left): if a straight-line charge in
 //      some direction would end with a strike on enemies (and no teammates),
 //      charge in the direction that hits the most.
+//   Builders: keep channelling once started; otherwise build on their own
+//      hex when no enemy is within 2, step away when one is, and move to a
+//      fresh hex when theirs is already built on.
 //   Stalkers (units with a teleport): if an enemy is within 2, teleport to
 //      the free hex in range furthest from the enemy (leaving a mine where it
 //      stood), or, at its mine limit (it can't teleport then), walk away;
@@ -43,7 +46,7 @@
 //
 // Distances are hex steps; lines are straight hex lines (see engine/hex.js).
 
-import { move, attack, charge, teleport } from '../engine/orders.js';
+import { move, attack, charge, teleport, build } from '../engine/orders.js';
 import { nextStep, strikeCells, distancesTo, chargePlan, walkToward } from '../engine/game.js';
 import { getUnitType, AttackKind } from '../engine/unitTypes.js';
 import { step, distance, OPPOSITE, neighbors } from '../engine/hex.js';
@@ -75,6 +78,9 @@ export function planTurn(game, team) {
     const def = getUnitType(u.type);
     const atk = def.attack;
 
+    // Channelling (e.g. building): leave it be; its order carries itself over.
+    if (u.channel) continue;
+
     const dodge = dodgeCell(game, u);
     if (dodge) {
       plan.push([u.id, move(dodge[0], dodge[1])]);
@@ -91,8 +97,30 @@ export function planTurn(game, team) {
     }
 
     // Walking distance from u to every hex it can reach (terrain-aware).
-    const walk = distancesTo(game, u.x, u.y);
+    const walk = distancesTo(game, u.x, u.y, u.team);
     const target = nearest(u, enemies, walk);
+
+    // Builders: build where they stand when no enemy is close; step away
+    // from enemies that get within 2; move on from a hex that's built on.
+    if (def.build) {
+      const d = target ? walk.get(`${target.x},${target.y}`) : Infinity;
+      if (d <= 2) {
+        const away = walkAway(game, u, enemies);
+        if (away) {
+          plan.push([u.id, move(away[0], away[1])]);
+          planMove(u, move(away[0], away[1]));
+        }
+      } else if (!game.buildingAt(u.x, u.y)) {
+        plan.push([u.id, build()]);
+      } else {
+        const spot = freshHex(game, u, enemies);
+        if (spot) {
+          plan.push([u.id, move(spot[0], spot[1])]);
+          planMove(u, move(spot[0], spot[1]));
+        }
+      }
+      continue;
+    }
 
     // Stalker-style units: teleport away when an enemy gets close (leaving
     // a mine in its path), otherwise hover about the teleport distance away.
@@ -194,7 +222,7 @@ function bestStrike(game, u, atk, teamCells) {
 /** The hexes a move to (x, y) would pass through (engine route, units ignored). */
 function routeTo(game, u, x, y) {
   const cells = [];
-  let cur = { x: u.x, y: u.y, order: move(x, y) };
+  let cur = { x: u.x, y: u.y, team: u.team, order: move(x, y) };
   for (let k = 0; k < u.speed; k++) {
     const next = nextStep(cur, game);
     if (next.x === cur.x && next.y === cur.y) break;
@@ -214,9 +242,9 @@ function safeStep(game, u, tx, ty) {
   const [x, y] = walkToward(game, u, tx, ty);
   const mined = (cells) => cells.some(([cx, cy]) => game.mineAt(cx, cy));
   if (!mined(routeTo(game, u, x, y))) return [x, y];
-  const toTarget = distancesTo(game, tx, ty);
+  const toTarget = distancesTo(game, tx, ty, u.team);
   let best = null;
-  for (const [k, d] of distancesTo(game, u.x, u.y)) {
+  for (const [k, d] of distancesTo(game, u.x, u.y, u.team)) {
     if (d === 0 || d > u.speed) continue;
     const [cx, cy] = k.split(',').map(Number);
     if (game.unitAt(cx, cy) || mined(routeTo(game, u, cx, cy))) continue;
@@ -234,7 +262,7 @@ function safeStep(game, u, tx, ty) {
 function walkAway(game, u, enemies) {
   const nearestEnemy = (x, y) => Math.min(...enemies.map((e) => distance(x, y, e.x, e.y)));
   let best = null;
-  for (const [k, d] of distancesTo(game, u.x, u.y)) {
+  for (const [k, d] of distancesTo(game, u.x, u.y, u.team)) {
     if (d === 0 || d > u.speed) continue;
     const [x, y] = k.split(',').map(Number);
     if (game.unitAt(x, y) || routeTo(game, u, x, y).some(([cx, cy]) => game.mineAt(cx, cy))) continue;
@@ -242,6 +270,23 @@ function walkAway(game, u, enemies) {
     if (!best || away > best.away || (away === best.away && (y < best.y || (y === best.y && x < best.x)))) best = { x, y, away };
   }
   return best && best.away > nearestEnemy(u.x, u.y) ? [best.x, best.y] : null;
+}
+
+/**
+ * A free, unbuilt hex within one turn's walk (mine-free route) to build on
+ * next, preferring hexes further from enemies; null if none.
+ */
+function freshHex(game, u, enemies) {
+  const nearestEnemy = (x, y) => (enemies.length ? Math.min(...enemies.map((e) => distance(x, y, e.x, e.y))) : 0);
+  let best = null;
+  for (const [k, d] of distancesTo(game, u.x, u.y, u.team)) {
+    if (d === 0 || d > u.speed) continue;
+    const [x, y] = k.split(',').map(Number);
+    if (game.unitAt(x, y) || game.buildingAt(x, y) || routeTo(game, u, x, y).some(([cx, cy]) => game.mineAt(cx, cy))) continue;
+    const away = nearestEnemy(x, y);
+    if (!best || away > best.away || (away === best.away && (y < best.y || (y === best.y && x < best.x)))) best = { x, y, away };
+  }
+  return best && [best.x, best.y];
 }
 
 /**
@@ -256,7 +301,7 @@ function escapeHex(game, u, range, enemies) {
     for (let y = 0; y < game.height; y++) {
       const d = distance(u.x, u.y, x, y);
       if (d === 0 || d > range) continue;
-      if (!game.isWalkable(x, y) || game.unitAt(x, y) || game.mineAt(x, y) || game.projectileAt(x, y)) continue;
+      if (!game.isWalkable(x, y, u.team) || game.unitAt(x, y) || game.mineAt(x, y) || game.projectileAt(x, y)) continue;
       const away = nearestEnemy(x, y);
       if (!best || away > best.away) best = { x, y, away };
     }
@@ -365,7 +410,7 @@ function dodgeCell(game, u) {
     for (const side of DIR_PRIORITY) {
       if (side === p.dir || side === OPPOSITE[p.dir]) continue;
       const [nx, ny] = step(u.x, u.y, side);
-      if (game.isWalkable(nx, ny) && !game.unitAt(nx, ny) && !game.mineAt(nx, ny)) return [nx, ny];
+      if (game.isWalkable(nx, ny, u.team) && !game.unitAt(nx, ny) && !game.mineAt(nx, ny)) return [nx, ny];
     }
   }
   return null;

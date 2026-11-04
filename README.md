@@ -113,6 +113,27 @@ It's all unit JSON: `"teleport": { "distance": 3, "leavesMine": true, "maxMines"
 `"uses": n` to limit it). The CPU stalker closes in to about 3 hexes from your units and teleports away, leaving a mine
 in their path, when one gets within 2. CPU units never walk, charge or dodge onto a mine.
 
+### Builder (channelled buildings)
+
+The **builder** has no attack. Its ability is **build** (`build()`): it **channels for 2 turns** on
+its own hex, and then a **building** appears there.
+
+- **Channelling:** turn 1, its build order runs and records progress 1/2. The order then carries
+  itself over to the start of next turn's queue, alongside shots in flight. When it runs again on
+  turn 2, the building is finished.
+- **Interrupting:** giving the builder any other order breaks the channel, and the progress is lost
+  (`channelBroken` event). A builder killed before its second entry builds nothing. Queue order
+  decides it, as always. "Clear" (your new orders) doesn't cancel a channel in progress.
+- **One per hex:** you can't build where there's already a building.
+- **Buildings:** **allied units can walk on or through them** and stand on them. To the other team
+  they're **impassable**, like water: their moves, routes, charges and teleports go around or stop
+  short. Otherwise **buildings do nothing**: shots, strikes and mines ignore them, and a unit standing
+  on one can be hit as usual. `game.buildings` lists them (saved and hashed).
+- **Defined in the unit JSON:** `"build": { "turns": 2 }`.
+- **CPU:** CPU builders build where they stand when none of your units is within 2, leave a channel
+  alone once started, step away when you get close, and move on to a fresh hex once theirs is built
+  on.
+
 ### CPU (`src/ai/cpu.js`)
 
 Deterministic: same board, same plan. For each CPU unit in id order:
@@ -260,6 +281,7 @@ error messages that name the unit and field.
 | `attack.speed` | projectile: hexes flown per queue entry, 1–6 |
 | `attack.range` | projectile: max cells travelled; leave it out for unlimited |
 | `teleport` | optional `{ "distance": 3, "leavesMine": true, "maxMines": 2, "uses": n }`: jump to any free walkable hex up to `distance` away; optionally leave a mine behind; can't teleport with `maxMines` of its mines down; `uses` per match (omit for unlimited) |
+| `build` | optional `{ "turns": 2 }`: channel this many turns to put a building on its own hex |
 | `charge` | optional `{ "distance": 3, "uses": 1 }`: a straight-line rush of up to `distance` hexes, ending with the unit's attack in that direction; goes to the front of the queue; `uses` times per unit per match |
 | `attack.maxInFlight` | optional, projectile attacks: can't fire while this many of the unit's projectiles are still in flight |
 | `attack.blockedByAdjacentEnemy` | optional, `true`: the attack fails if an enemy is next to the unit when its queue entry runs |
@@ -334,7 +356,9 @@ UI header, so two runs with the same orders can be compared at a glance.
 - **Ability** mode: select one of your units with an ability. A **pikeman** charges: tap toward where
   it should charge (any hex or unit; snapped to the nearest hex direction). A **stalker** teleports:
   tap one of the highlighted hexes (its teleport is drawn as a dotted arc, with a faint preview of the
-  mine it will leave). For a charge, the board shows the straight path in purple and the hexes its
+  mine it will leave). A **builder**: one tap queues its build on its own hex (dashed outline). While
+  it channels, a progress ring shows around it. Finished buildings are a tinted hex with a house
+  badge, in the team's colour. For a charge, the board shows the straight path in purple and the hexes its
   closing strike will hit. Pikemen that still have a charge show a purple chevron pip.
 - **Quick** mode: the same, but queues that unit's one-time quick move (drawn in cyan, listed first in
   the queue). Units that still have their quick move show a small lightning pip.

@@ -8,6 +8,7 @@ export const OrderType = Object.freeze({
   ATTACK: 'attack',
   CHARGE: 'charge',
   TELEPORT: 'teleport',
+  BUILD: 'build',
 });
 
 import { ALL_DIRECTIONS } from './hex.js';
@@ -49,6 +50,15 @@ export function teleport(x, y) {
   return { type: OrderType.TELEPORT, x, y };
 }
 
+/**
+ * Create a build order: the unit channels on its own hex for its type's
+ * build turns (2 for builders); then a building appears there. The order
+ * carries itself over to the next turn while channelling.
+ */
+export function build() {
+  return { type: OrderType.BUILD };
+}
+
 /** Quick moves and charges go to the front of the queue. */
 export const goesToFront = (order) => !!(order?.quick || order?.type === OrderType.CHARGE);
 
@@ -78,6 +88,8 @@ export function validateOrder(order, grid, unitType = null) {
       if (x < 0 || y < 0 || x >= grid.width || y >= grid.height) return 'target out of bounds';
       return null;
     }
+    case OrderType.BUILD:
+      return null;
     case OrderType.TELEPORT: {
       const { x, y } = order;
       if (!Number.isInteger(x) || !Number.isInteger(y)) return 'coordinates must be integers';

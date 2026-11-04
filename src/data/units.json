@@ -29,6 +29,12 @@
       "speed": 1,
       "shape": "triangle",
       "teleport": { "distance": 3, "leavesMine": true, "maxMines": 2 }
+    },
+    "builder": {
+      "name": "Builder",
+      "speed": 1,
+      "shape": "square",
+      "build": { "turns": 2 }
     }
   }
 }

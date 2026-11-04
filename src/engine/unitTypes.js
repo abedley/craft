@@ -25,6 +25,10 @@
 //                                       on the board; `uses` per match (leave
 //                                       it out for unlimited). A normal-speed
 //                                       order: it joins the end of the queue.
+//         "build": { "turns": 2 }        optional: channel this many turns to
+//                                       put a building on its own hex (allies
+//                                       can walk on/through buildings; enemies
+//                                       can't)
 //         "charge": { "distance": 3, "uses": 1 }
 //                                       optional: a move of up to `distance`
 //                                       hexes that goes to the FRONT of the
@@ -87,7 +91,7 @@ export function getUnitType(type) {
 export function defineUnitType(key, raw) {
   const fail = (msg) => { throw new Error(`Unit type "${key}": ${msg}`); };
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) fail('must be an object');
-  checkKeys(raw, ['name', 'speed', 'shape', 'attack', 'charge', 'teleport'], fail);
+  checkKeys(raw, ['name', 'speed', 'shape', 'attack', 'charge', 'teleport', 'build'], fail);
 
   if (typeof raw.name !== 'string' || !raw.name) fail('"name" must be a non-empty string');
   checkSpeed(raw.speed, '"speed"', fail);
@@ -151,6 +155,15 @@ export function defineUnitType(key, raw) {
     teleport = Object.freeze({ distance: t.distance, leavesMine: t.leavesMine ?? false, maxMines: t.maxMines ?? null, uses: t.uses ?? null });
   }
 
+  let build = null;
+  if (raw.build !== undefined) {
+    const b = raw.build;
+    if (!b || typeof b !== 'object' || Array.isArray(b)) fail('"build" must be an object');
+    checkKeys(b, ['turns'], fail, 'build.');
+    if (!Number.isInteger(b.turns) || b.turns < 1) fail('"build.turns" must be a positive integer');
+    build = Object.freeze({ turns: b.turns });
+  }
+
   return Object.freeze({
     key,
     name: raw.name,
@@ -159,10 +172,12 @@ export function defineUnitType(key, raw) {
     attack,
     charge,
     teleport,
+    build,
     orders: Object.freeze([
       OrderType.MOVE,
       ...(attack ? [OrderType.ATTACK] : []),
       ...(teleport ? [OrderType.TELEPORT] : []),
+      ...(build ? [OrderType.BUILD] : []),
     ]),
   });
 }

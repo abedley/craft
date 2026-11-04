@@ -117,6 +117,12 @@ export class Renderer {
       }
     }
 
+    // Buildings: a tinted hex with a small house, in the owning team's colour.
+    for (const b of game.buildings ?? []) {
+      const [cx, cy] = this.center(b.x, b.y);
+      this.drawBuilding(cx, cy, TEAM_COLORS[b.team] ?? '#ffffff');
+    }
+
     // Mines (visible to both sides), in the colour of the team that laid them.
     for (const m of game.mines ?? []) {
       const [cx, cy] = this.center(m.x, m.y);
@@ -153,6 +159,16 @@ export class Renderer {
         this.drawCharge(game, u, order.dir);
       } else if (order.type === 'teleport') {
         this.drawTeleport(u, order);
+      } else if (order.type === 'build') {
+        // Where the building will go: a dashed outline on the builder's hex.
+        const [cx, cy] = this.center(u.x, u.y);
+        ctx.save();
+        ctx.strokeStyle = TEAM_COLORS[u.team] ?? '#fff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        this.hexPath(cx, cy, this.size - 4);
+        ctx.stroke();
+        ctx.restore();
       } else if (order.type === 'attack') {
         const atk = UnitTypes[u.type].attack;
         if (atk.kind === AttackKind.PROJECTILE) this.drawShotLine(game, u, order.dir, atk.range);
@@ -198,8 +214,15 @@ export class Renderer {
       ctx.fillStyle = COLORS.label;
       ctx.fillText(String(u.id), cx, cy + 1);
       if (u.speed > 1) this.drawSpeedBadge(cx + r * 0.75, cy - r * 0.75, u.speed);
+      if (u.channel) this.drawProgress(cx, cy, r + 6, u.channel.progress / (UnitTypes[u.type].build?.turns ?? 1), unitColor(u));
       if (u.quickMoves > 0) this.drawQuickPip(cx - r * 0.8, cy + r * 0.8);
       if (u.charges > 0) this.drawChargePip(cx - r * 0.8, cy - r * 0.8);
+    }
+
+    // Building badges go above units so a unit standing on one doesn't hide it.
+    for (const b of game.buildings ?? []) {
+      const [cx, cy] = this.center(b.x, b.y);
+      this.drawBuildingBadge(cx, cy, TEAM_COLORS[b.team] ?? '#ffffff');
     }
 
     // Projectiles: a dot with a short tail pointing back the way it came.
@@ -344,6 +367,59 @@ export class Renderer {
       ctx.bezierCurveTo(cx + size * 0.3, y - size * 0.08, cx + size * 0.4, y - size * 0.08, cx + size * 0.45, y);
       ctx.stroke();
     }
+    ctx.restore();
+  }
+
+  /** A building: a tinted hex with an outline in the team's colour (badge drawn separately). */
+  drawBuilding(cx, cy, color) {
+    const { ctx, size } = this;
+    ctx.save();
+    this.hexPath(cx, cy, size - 3);
+    ctx.globalAlpha = 0.25;
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.globalAlpha = 0.9;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** The house badge for a building, drawn above units so it always shows. */
+  drawBuildingBadge(cx, cy, color) {
+    const { ctx, size } = this;
+    const s = size * 0.17;
+    const hx = cx + size * 0.55;
+    const hy = cy + size * 0.42;
+    ctx.save();
+    ctx.fillStyle = COLORS.label;
+    ctx.beginPath();
+    ctx.arc(hx, hy, s * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(hx - s, hy - s * 0.1);
+    ctx.lineTo(hx, hy - s);
+    ctx.lineTo(hx + s, hy - s * 0.1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillRect(hx - s * 0.7, hy - s * 0.1, s * 1.4, s * 0.9);
+    ctx.restore();
+  }
+
+  /** A progress ring around a unit (fraction 0..1). */
+  drawProgress(cx, cy, radius, fraction, color) {
+    const { ctx } = this;
+    ctx.save();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = color;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * fraction);
+    ctx.stroke();
     ctx.restore();
   }
 
