@@ -127,8 +127,12 @@ its own hex, and then a **building** appears there.
 - **One per hex:** you can't build where there's already a building.
 - **Buildings:** **allied units can walk on or through them** and stand on them. To the other team
   they're **impassable**, like water: their moves, routes, charges and teleports go around or stop
-  short. Otherwise **buildings do nothing**: shots, strikes and mines ignore them, and a unit standing
-  on one can be hit as usual. `game.buildings` lists them (saved and hashed).
+  short.
+- **Buildings stop projectiles** (either team's, including your own side's): a shot that flies into a
+  building hex is used up there (`projectileBlocked`), and a unit standing on that building is not
+  hit, so buildings shield the units on them. A gunslinger standing on a building fires out of it
+  normally. The building is unharmed. Strikes and mines ignore buildings. `game.buildings` lists them
+  (saved and hashed).
 - **Defined in the unit JSON:** `"build": { "turns": 2 }`.
 - **CPU:** CPU builders build where they stand when none of your units is within 2, leave a channel
   alone once started, step away when you get close, and move on to a fresh hex once theirs is built
@@ -317,7 +321,8 @@ that walks in later is safe. A pikeman killed earlier in the queue never strikes
 doesn't hit anything, it stays in flight: it gets an entry in the carried-over part of next turn's
 queue and flies another 4 hexes then. It ends when it leaves the board or passes its `range` (if
 set). Shots fly over any terrain, never steer, don't block units, and don't collide with each
-other. A unit that walks into a hex where a shot is sitting is hit.
+other, but a **building stops them** (see *Builder*). A unit that walks into a hex where a shot is
+sitting is hit.
 
 So two gunslingers facing each other within 4 hexes: the one first in the queue wins, and the other
 never fires.

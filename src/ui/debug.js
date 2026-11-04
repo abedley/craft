@@ -660,6 +660,7 @@ function fmtEvent(e) {
     case 'chargeEnded': return `<div class="charge">#${e.unitId}'s charge ${e.reason === 'collided' ? `hit #${e.by}` : e.reason === 'terrain' ? 'was stopped by terrain / the edge' : 'went the full distance'}</div>`;
     case 'shot': return `<div class="shot">#${e.unitId} fired projectile ${e.projectileId} ${e.dir} from ${e.from}</div>`;
     case 'projectileMoved': return `<div class="shot">projectile ${e.projectileId} ${e.path.map((p) => p.join(',')).join(' → ')}</div>`;
+    case 'projectileBlocked': return `<div class="shot">projectile ${e.projectileId} stopped by building ${e.buildingId} at ${e.at}</div>`;
     case 'projectileExpired': return `<div class="meta">projectile ${e.projectileId} is gone (left the board or out of range)</div>`;
     case 'attackBlocked': return `<div class="blocked">#${e.unitId} can't shoot: ${e.reason === 'projectile in flight' ? `its shot (projectile ${e.by}) is still flying` : `enemy #${e.by} is next to it`}</div>`;
     case 'strike': return `<div class="shot">#${e.unitId} struck ${e.dir} at ${e.cells.map((c) => c.join(',')).join(' and ') || '(off the board)'}</div>`;

@@ -58,18 +58,19 @@ test('giving the builder another order breaks the channel and loses the progress
   assert.equal(g.buildings.length, 1);
 });
 
-test('queue order decides whether a builder finishes before it is killed', () => {
-  // Turn 2: the carried-over build is at the front of the queue, so it
-  // finishes before a shot queued that turn can kill the builder.
+test('queue order decides whether a builder finishes before it is shot', () => {
+  // Turn 2: the carried-over build is at the front of the queue, so the
+  // building is up before a shot queued that turn arrives, and it shields
+  // the builder standing on it.
   const g = col(6, [[3, { type: B }], [0, { type: 'gunslinger', team: C }]]);
   g.queueOrder(1, build());
   g.tick();
   g.queueOrder(2, attack('down'));
   const events = g.tick();
-  assert.ok(events.find((e) => e.type === 'built').step < events.find((e) => e.type === 'killed').step);
-  assert.equal(g.buildings.length, 1);
+  assert.ok(events.find((e) => e.type === 'built').step < events.find((e) => e.type === 'projectileBlocked').step);
+  assert.ok(g.getUnit(1), 'shielded by its new building');
 
-  // Killed on turn 1, mid-channel: nothing gets built.
+  // Shot on turn 1, mid-channel: killed, nothing gets built.
   const h = col(6, [[3, { type: B }], [0, { type: 'gunslinger', team: C }]]);
   h.queueOrder(2, attack('down'));
   h.queueOrder(1, build());
@@ -133,11 +134,13 @@ test('enemy charges stop at a building; enemy teleports can\'t land on one', () 
   assert.throws(() => g.queueOrder(3, teleport(0, 3)), /enemy building/);
 });
 
-test('buildings do nothing else: shots fly over them, units on them can be hit', () => {
-  const g = col(6, [[2, { type: B }], [0, { type: 'gunslinger', team: C }]]);
+test('strikes and mines ignore buildings', () => {
+  // A pikeman strike reaches a unit standing on a building.
+  const g = col(5, [[2, { type: B }], [0, { team: C }]]);
   buildHere(g, 1);
-  g.queueOrder(2, attack('down'));
-  assert.deepEqual(kills(g.tick()), [1], 'the builder standing on its building is shot');
+  g.getUnit(2).charges = 0;
+  g.queueOrder(2, attack('down')); // strikes (0,1) and (0,2)
+  assert.deepEqual(kills(g.tick()), [1]);
   assert.equal(g.buildings.length, 1, 'the building stays');
 });
 
@@ -182,4 +185,60 @@ test('the CPU builder builds when safe, keeps channelling, and steps away from c
   // An enemy within 2: it steps away.
   const near = new Game({ width: 8, height: 8, units: [{ x: 3, y: 3, type: B, team: C }, { x: 3, y: 5 }] });
   assert.equal(planTurn(near, C)[0][1].type, 'move');
+});
+
+// ---- Buildings stop projectiles ------------------------------------------
+
+test('a shot that flies into a building stops there; the unit behind is safe', () => {
+  // Player building at (0,2); CPU gunslinger at the top shoots down at (0,4).
+  const g = col(6, [[2, { type: B }], [0, { type: 'gunslinger', team: C }], [4]]);
+  buildHere(g, 1);
+  g.queueOrder(1, move(0, 3)); // builder steps off
+  g.tick();
+  g.queueOrder(2, attack('down'));
+  const events = g.tick();
+  const blocked = events.find((e) => e.type === 'projectileBlocked');
+  assert.deepEqual([blocked.at, blocked.buildingId], [[0, 2], 1]);
+  assert.deepEqual(kills(events), []);
+  assert.equal(g.projectiles.length, 0, 'used up');
+  assert.equal(g.buildings.length, 1, 'the building is unharmed');
+});
+
+test('a unit standing on a building is shielded from shots', () => {
+  const g = col(6, [[2, { type: B }], [0, { type: 'gunslinger', team: C }]]);
+  buildHere(g, 1);
+  g.queueOrder(2, attack('down'));
+  const events = g.tick();
+  assert.deepEqual(kills(events), [], 'the builder on its building survives');
+  assert.ok(events.some((e) => e.type === 'projectileBlocked'));
+});
+
+test('buildings of either team stop shots, including your own side\'s', () => {
+  const g = col(6, [[2, { type: B }], [0, { type: 'gunslinger' }], [4, { team: C }]]);
+  buildHere(g, 1);
+  g.queueOrder(1, move(0, 3));
+  g.tick();
+  g.queueOrder(2, attack('down')); // our own building is in the way
+  assert.deepEqual(kills(g.tick()), []);
+});
+
+test('a gunslinger standing on a building can still shoot out of it', () => {
+  // Column 1 of a 3-wide board: the builder builds at (1,1), steps aside to
+  // (0,1); our gunslinger steps onto the building and fires down the column.
+  const g = new Game({ width: 3, height: 7, units: [{ x: 1, y: 1, type: B }, { x: 1, y: 0, type: 'gunslinger' }, { x: 1, y: 5, team: C }] });
+  buildHere(g, 1);
+  g.queueOrder(1, move(0, 1));
+  g.tick();
+  g.queueOrder(2, move(1, 1));
+  g.tick();
+  assert.ok(g.buildingAt(1, 1) && g.unitAt(1, 1).id === 2);
+  g.queueOrder(2, attack('down'));
+  assert.deepEqual(kills(g.tick()), [3]);
+});
+
+test('the CPU doesn\'t shoot into buildings or at units standing on one', () => {
+  const g = col(8, [[3, { type: B }], [0, { type: 'gunslinger', team: C }], [6]]);
+  buildHere(g, 1);
+  // The building at (0,3) is between the CPU gunslinger and both our units.
+  assert.ok(!planTurn(g, C).some(([, o]) => o.type === 'attack'));
 });

@@ -62,7 +62,10 @@
 // at the start). On the last turn a building appears on that hex. Giving the
 // unit any other order breaks the channel and its progress is lost.
 // Buildings: allied units can walk on or through them; to enemy units they
-// are impassable, like water. Shots, strikes and mines ignore them.
+// are impassable, like water. They also STOP PROJECTILES (either team's):
+// a shot that flies into a building hex is used up there, and a unit standing
+// on that hex is not hit. A shot fired from a building flies out normally.
+// Strikes and mines ignore buildings.
 //
 // Mines: any unit (either team, the stalker too) that moves onto a mined hex
 // by walking, charging through or teleporting onto it, sets it off and is
@@ -561,8 +564,9 @@ export class Game {
   }
 
   /**
-   * Fly a projectile up to its speed. It hits the first unit it meets, and
-   * is gone if it leaves the board or passes its range. Returns true if it
+   * Fly a projectile up to its speed. It hits the first unit it meets, is
+   * stopped by the first building it meets (the building wins over a unit
+   * standing on it), and is gone if it leaves the board or passes its range. Returns true if it
    * is still flying afterwards.
    */
   fly(p, events, stepNo) {
@@ -578,6 +582,14 @@ export class Game {
         break;
       }
       path.push([p.x, p.y]);
+      const building = this.buildingAt(p.x, p.y);
+      if (building) {
+        // Buildings stop projectiles (anyone's); a unit standing there is safe.
+        events.push({ type: 'projectileBlocked', step: stepNo, projectileId: p.id, at: [p.x, p.y], buildingId: building.id });
+        this.removeProjectile(p);
+        flying = false;
+        break;
+      }
       const victim = this.unitAt(p.x, p.y);
       if (victim) {
         this.removeProjectile(p);

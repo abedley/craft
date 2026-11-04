@@ -307,8 +307,10 @@ export class Renderer {
     const dx = Math.cos(DIRECTION_ANGLES[dir]);
     const dy = Math.sin(DIRECTION_ANGLES[dir]);
     let [ex, ey] = [u.x, u.y];
+    let stopped = false;
     for (let d = 1, next = step(ex, ey, dir); game.inBounds(...next) && (range === null || d <= range); d++, next = step(ex, ey, dir)) {
       [ex, ey] = next;
+      if (game.buildingAt?.(ex, ey)) { stopped = true; break; } // the shot stops at a building
     }
     const [ax, ay] = this.center(u.x, u.y);
     const [bx, by] = this.center(ex, ey);
@@ -317,9 +319,12 @@ export class Renderer {
     ctx.setLineDash([2, 5]);
     ctx.beginPath();
     ctx.moveTo(ax, ay);
-    ctx.lineTo(bx + dx * this.cell * 0.5, by + dy * this.cell * 0.5);
+    // To the board edge (half a hex past the last hex), or ending on the building that stops it.
+    const reach = stopped ? 0 : 0.5;
+    ctx.lineTo(bx + dx * this.cell * reach, by + dy * this.cell * reach);
     ctx.stroke();
     ctx.setLineDash([]);
+    if (stopped) this.drawCross(bx, by, this.cell * 0.12, COLORS.shotLine);
   }
 
   /** Red "no" sign: this unit's queued attack will fail. */

@@ -175,10 +175,14 @@ export function planTurn(game, team) {
   return plan;
 }
 
-/** First unit along a straight line from (x, y), not counting (x, y). */
+/**
+ * First unit a shot from (x, y) along `dir` would hit, not counting (x, y):
+ * null if a building (which stops shots) or the board edge comes first.
+ */
 export function firstInLine(game, x, y, dir, maxDist = Infinity) {
   let [cx, cy] = step(x, y, dir);
   for (let d = 1; game.inBounds(cx, cy) && d <= maxDist; d++, [cx, cy] = step(cx, cy, dir)) {
+    if (game.buildingAt(cx, cy)) return null; // buildings stop shots (and shield units on them)
     const hit = game.unitAt(cx, cy);
     if (hit) return { unit: hit, dist: d };
   }
@@ -331,7 +335,7 @@ function survivesNextFlight(game, p) {
   for (let k = 1; k <= p.speed; k++) {
     [x, y] = step(x, y, p.dir);
     if (!game.inBounds(x, y) || (p.range !== null && p.traveled + k > p.range)) return false;
-    if (game.unitAt(x, y)) return false;
+    if (game.buildingAt(x, y) || game.unitAt(x, y)) return false;
   }
   return true;
 }
@@ -355,6 +359,7 @@ function nearest(u, others, walk) {
 function firingPosition(game, u, atk, enemies, walk) {
   let best = null;
   for (const e of enemies) {
+    if (game.buildingAt(e.x, e.y)) continue; // shots can't reach a unit on a building
     for (const firing of inPriorityOrder(atk.directions)) {
       // A shooter firing `firing` at e stands on the opposite side of e.
       // Walk outward from e; each free cell passed has a clear line back to
@@ -363,6 +368,7 @@ function firingPosition(game, u, atk, enemies, walk) {
       const back = OPPOSITE[firing];
       let [x, y] = step(e.x, e.y, back);
       for (let d = 1; game.inBounds(x, y) && d <= (atk.range ?? Infinity); d++, [x, y] = step(x, y, back)) {
+        if (game.buildingAt(x, y)) break; // a building would stop the shot
         const occ = game.unitAt(x, y);
         if (occ && occ.id !== u.id) break;
         if (occ) continue; // u's own cell: if a shot existed bestShot would have fired
@@ -395,11 +401,13 @@ function dodgeCell(game, u) {
     // How many hexes until p reaches u's hex, if u is on p's path at all?
     let k = 0;
     let [x, y] = [p.x, p.y];
+    let stopped = false;
     while (game.inBounds(x, y) && !(x === u.x && y === u.y) && k <= 2 * p.speed) {
       [x, y] = step(x, y, p.dir);
       k += 1;
+      if (game.buildingAt(x, y)) { stopped = true; break; } // a building stops it first
     }
-    if (k === 0 || x !== u.x || y !== u.y) continue;
+    if (stopped || k === 0 || x !== u.x || y !== u.y) continue;
     if (k <= p.speed) continue; // it hits before we can move: nothing to do
     if (k > 2 * p.speed) continue; // not urgent yet
     if (p.range !== null && p.traveled + k > p.range) continue; // falls short
