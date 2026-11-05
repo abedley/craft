@@ -1,9 +1,11 @@
-// Terrain, trees, buildings, mines and the objective flag, in ink.
+// Terrain, trees, buildings, mines and the objective flag.
 //
 // Each function draws one thing at one hex using an IsoView for positions.
-// `seed` keeps the hand-drawn wobble the same from frame to frame.
+// `seed` keeps the hand-drawn wobble the same from frame to frame. Terrain is
+// sketched in light pencil so it stays in the background; things that matter
+// for play (trees' outlines, buildings, mines, the goal flag) are in ink.
 
-import { INK, PAPER, rng, seedOf, line, poly, hatch, stipple, ellipse, clipTo } from '../ink.js';
+import { INK, PENCIL, SHADE, PAPER, rng, seedOf, line, poly, hatch, stipple, ellipse, clipTo } from '../ink.js';
 import { BASE, BUILDING_HEIGHT } from '../iso.js';
 
 /** Line-width multiplier for the current zoom (1 at 30 px per hex radius). */
@@ -18,13 +20,13 @@ export function drawTile(ctx, view, x, y, key, seed = 0) {
   const k = penOf(view);
   const h = view.groundHeight(x, y);
   // Sides: left lit, right in shade.
-  const gaps = { left: 5.5, right: 2.6 };
+  const gaps = { left: 7, right: 4 };
   for (const { side, pts } of view.sides(x, y, h)) {
-    poly(ctx, pts, r, { fill: PAPER, width: 1.2 * k, amp: 0.5 });
-    hatch(ctx, pts, r, { angle: Math.PI / 2, gap: gaps[side] * k, width: 0.8 * k, amp: 0.35 });
+    poly(ctx, pts, r, { fill: PAPER, width: 1.1 * k, amp: 0.5, color: SHADE });
+    hatch(ctx, pts, r, { angle: Math.PI / 2, gap: gaps[side] * k, width: 0.7 * k, amp: 0.35, color: PENCIL });
   }
   const top = view.face(x, y, h);
-  poly(ctx, top, r, { fill: PAPER, width: 1.5 * k, amp: 0.6 });
+  poly(ctx, top, r, { fill: PAPER, width: 1.1 * k, amp: 0.6, color: PENCIL });
   drawTexture(ctx, view, x, y, key, h, r, k);
 }
 
@@ -40,31 +42,31 @@ function drawTexture(ctx, view, x, y, key, h, r, k) {
   };
   switch (key) {
     case 'grass': {
-      const n = 2 + Math.floor(r() * 3);
-      for (let i = 0; i < n; i++) tuft(ctx, ...spot(), s * 0.09, r, k);
+      const n = r() < 0.45 ? 0 : 1 + Math.floor(r() * 2);
+      for (let i = 0; i < n; i++) tuft(ctx, ...spot(), s * 0.09, r, k, PENCIL);
       break;
     }
     case 'forest': {
-      stipple(ctx, inner, r, { density: 0.5 / k, size: 0.7 * k });
+      stipple(ctx, inner, r, { density: 0.3 / k, size: 0.7 * k, color: PENCIL });
       break;
     }
     case 'road': {
       // Cobbles.
-      const n = 6 + Math.floor(r() * 3);
+      const n = 3 + Math.floor(r() * 2);
       for (let i = 0; i < n; i++) {
         const [cx, cy] = spot();
-        ellipse(ctx, cx, cy, s * (0.1 + r() * 0.05), s * (0.05 + r() * 0.025), r, { width: 0.9 * k });
+        ellipse(ctx, cx, cy, s * (0.1 + r() * 0.05), s * (0.05 + r() * 0.025), r, { width: 0.9 * k, color: PENCIL });
       }
       break;
     }
     case 'sand': {
-      stipple(ctx, inner, r, { density: 1.5 / k, size: 0.65 * k });
+      stipple(ctx, inner, r, { density: 0.9 / k, size: 0.65 * k, color: PENCIL });
       const [cx, cy] = spot();
       arc(ctx, cx, cy, s * 0.22, r, k);
       break;
     }
     case 'water': {
-      hatch(ctx, view.face(x, y, h, 0.97), r, { angle: 0, gap: 3.4 * k, width: 0.7 * k, amp: 0.6 });
+      hatch(ctx, view.face(x, y, h, 0.97), r, { angle: 0, gap: 3.6 * k, width: 0.7 * k, amp: 0.6, color: PENCIL });
       clipTo(ctx, view.face(x, y, h, 0.96), () => {
         for (let i = 0; i < 3; i++) {
           const [cx, cy] = spot();
@@ -74,21 +76,21 @@ function drawTexture(ctx, view, x, y, key, h, r, k) {
       break;
     }
     default:
-      stipple(ctx, inner, r, { density: 0.25 / k, size: 0.7 * k });
+      stipple(ctx, inner, r, { density: 0.25 / k, size: 0.7 * k, color: PENCIL });
   }
 }
 
 /** A little "\|/" grass tuft standing on (x, y). */
-export function tuft(ctx, x, y, size, r, k = 1) {
+export function tuft(ctx, x, y, size, r, k = 1, color = INK) {
   ctx.lineCap = 'round';
   for (const a of [-0.5, 0, 0.5]) {
     const len = size * (0.7 + r() * 0.5);
-    line(ctx, x + a * size * 0.3, y, x + a * size * 0.3 + Math.sin(a) * len, y - Math.cos(a) * len, r, { width: 0.9 * k, amp: 0.2 });
+    line(ctx, x + a * size * 0.3, y, x + a * size * 0.3 + Math.sin(a) * len, y - Math.cos(a) * len, r, { width: 0.9 * k, amp: 0.2, color });
   }
 }
 
 function arc(ctx, x, y, w, r, k) {
-  ctx.strokeStyle = INK;
+  ctx.strokeStyle = PENCIL;
   ctx.lineWidth = 0.9 * k;
   ctx.beginPath();
   ctx.moveTo(x - w / 2, y);
@@ -103,7 +105,7 @@ function wave(ctx, x, y, w, r, k) {
   ctx.strokeStyle = PAPER;
   ctx.lineWidth = 4.5 * k;
   ctx.stroke();
-  ctx.strokeStyle = INK;
+  ctx.strokeStyle = SHADE;
   ctx.lineWidth = 1.2 * k;
   ctx.stroke();
 }
@@ -153,7 +155,7 @@ export function tree(ctx, x, y, size, r, k = 1) {
   poly(ctx, pts, r, { fill: PAPER, width: 1.4 * k, amp: 0.6 });
   // Shade the lower right of the canopy.
   const shade = pts.filter((p, i) => i <= 5).concat([[x, cy]]);
-  hatch(ctx, shade, r, { angle: -Math.PI / 4, gap: 2.6 * k, width: 0.8 * k, amp: 0.3 });
+  hatch(ctx, shade, r, { angle: -Math.PI / 4, gap: 3 * k, width: 0.8 * k, amp: 0.3, color: PENCIL });
 }
 
 /**
@@ -247,7 +249,7 @@ export function drawPaperDecor(ctx, view, seed = 0, pad = 2) {
     const inside = px > b.x0 - 0.3 && px < b.x1 + 0.3 && py > b.y0 - 0.2 && py < b.y1 + 0.6;
     if (inside) continue;
     const [sx, sy] = view.project(px, py, BASE);
-    if (r() < 0.55) tuft(ctx, sx, sy, s * 0.12, r, k);
-    else ellipse(ctx, sx, sy, s * (0.05 + r() * 0.06), s * (0.03 + r() * 0.03), r, { width: 1 * k, fill: r() < 0.3 ? INK : PAPER });
+    if (r() < 0.55) tuft(ctx, sx, sy, s * 0.12, r, k, PENCIL);
+    else ellipse(ctx, sx, sy, s * (0.05 + r() * 0.06), s * (0.03 + r() * 0.03), r, { width: 1 * k, fill: r() < 0.3 ? PENCIL : PAPER, color: PENCIL });
   }
 }

@@ -1,10 +1,11 @@
 // Markers drawn over the board: reach, selection, order intents (what each
 // queue entry is going to do), danger marks and turn-playback effects.
 //
-// CPU intents are heavy dashed ink; the player's are lighter dotted lines
-// with hollow arrowheads, so both read in 1-bit.
+// CPU attacks are heavy dashed ink; CPU moves are thin and light, so the
+// threats stand out. The player's orders are dotted lines with hollow
+// arrowheads. Hexes that will be hit this turn get a hatched "danger tile".
 
-import { INK, PAPER, rng, seedOf, line, poly, hatch, ellipse, crosshair, burst } from '../ink.js';
+import { INK, SHADE, PAPER, rng, seedOf, line, poly, hatch, ellipse, crosshair, burst } from '../ink.js';
 import { penOf } from './terrain.js';
 import { chargePlan, getUnitType } from '../../engine/index.js';
 import { step as stepOf } from '../../engine/hex.js';
@@ -13,8 +14,19 @@ import { movePath, rayCells } from '../shared.js';
 export const FONT = '"Patrick Hand", "Marker Felt", "Chalkboard SE", "Comic Sans MS", cursive';
 
 const styleOf = (team, k) => (team === 'cpu'
-  ? { width: 2.6 * k, dash: [7 * k, 4 * k], dark: true }
-  : { width: 2 * k, dash: [0.5, 5 * k], dark: false });
+  ? { width: 2.6 * k, dash: [7 * k, 4 * k], dark: true, color: INK }
+  : { width: 2 * k, dash: [0.5, 5 * k], dark: false, color: INK });
+/** CPU moves: thin and light, so they don't compete with its attacks. */
+const quietOf = (style, k) => (style.dark ? { width: 1.5 * k, dash: [5 * k, 4 * k], dark: true, color: SHADE } : style);
+
+/** Light hatching on the hexes that will be struck or shot through this turn. */
+export function dangerTiles(ctx, view, cells, seed = 0) {
+  const k = penOf(view);
+  for (const [x, y] of cells) {
+    const r = rng(seedOf('danger-tile', x, y, seed));
+    hatch(ctx, view.face(x, y, view.standHeight(x, y), 0.86), r, { angle: -Math.PI / 4, gap: 4.5 * k, width: 1 * k, amp: 0.3 });
+  }
+}
 
 /** Dotted outlines on hexes a selected unit can move or teleport to. */
 export function reachMarks(ctx, view, cells, { teleport = false, seed = 0 } = {}) {
@@ -25,7 +37,7 @@ export function reachMarks(ctx, view, cells, { teleport = false, seed = 0 } = {}
     ctx.save();
     ctx.setLineDash(teleport ? [1, 4 * k] : [5 * k, 4 * k]);
     ctx.lineCap = 'round';
-    ctx.lineWidth = 1.8 * k;
+    ctx.lineWidth = 1.4 * k;
     ctx.strokeStyle = INK;
     ctx.beginPath();
     pts.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)));
@@ -57,14 +69,14 @@ export function selectBrackets(ctx, view, x, y, seed = 0) {
 }
 
 /** Ring on a target hex. */
-function targetRing(ctx, view, x, y, r, k, dark) {
+function targetRing(ctx, view, x, y, r, k, style) {
   const [cx, cy] = view.center(x, y, view.standHeight(x, y));
-  ellipse(ctx, cx, cy, view.scale * 0.36, view.scale * 0.2, r, { width: (dark ? 2.4 : 1.8) * k });
+  ellipse(ctx, cx, cy, view.scale * 0.32, view.scale * 0.18, r, { width: Math.min(style.width, 1.8 * k), color: style.color });
 }
 
-function dashed(ctx, pts, { width, dash }) {
+function dashed(ctx, pts, { width, dash, color = INK }) {
   ctx.save();
-  ctx.strokeStyle = INK;
+  ctx.strokeStyle = color;
   ctx.lineWidth = width;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -77,17 +89,17 @@ function dashed(ctx, pts, { width, dash }) {
 }
 
 /** A filled (CPU) or hollow (player) arrowhead at `to`. */
-export function head(ctx, from, to, size, dark, k = 1) {
+export function head(ctx, from, to, size, dark, k = 1, color = INK) {
   const a = Math.atan2(to[1] - from[1], to[0] - from[0]);
   ctx.beginPath();
   ctx.moveTo(to[0], to[1]);
   ctx.lineTo(to[0] - Math.cos(a - 0.5) * size, to[1] - Math.sin(a - 0.5) * size);
   ctx.lineTo(to[0] - Math.cos(a + 0.5) * size, to[1] - Math.sin(a + 0.5) * size);
   ctx.closePath();
-  ctx.fillStyle = dark ? INK : PAPER;
+  ctx.fillStyle = dark ? color : PAPER;
   ctx.fill();
   ctx.lineWidth = 1.5 * k;
-  ctx.strokeStyle = INK;
+  ctx.strokeStyle = color;
   ctx.lineJoin = 'round';
   ctx.stroke();
 }
@@ -104,7 +116,7 @@ function arrowPath(ctx, view, cells, style, k, { lift = 0 } = {}) {
   const [bx, by] = pts[pts.length - 1];
   const end = [ax + (bx - ax) * 0.78, ay + (by - ay) * 0.78];
   dashed(ctx, [...pts.slice(0, -1), end], style);
-  head(ctx, pts[pts.length - 2], end, 9 * k + 3, style.dark, k);
+  head(ctx, pts[pts.length - 2], end, (style.color === INK ? 9 : 7) * k + 3, style.dark, k, style.color);
 }
 
 /**
@@ -131,8 +143,9 @@ export function drawIntent(ctx, view, game, entry, { seed = 0 } = {}) {
   switch (order.type) {
     case 'move': {
       const path = movePath(game, u, order.x, order.y);
-      arrowPath(ctx, view, path, style, k);
-      targetRing(ctx, view, order.x, order.y, r, k, style.dark);
+      const quiet = quietOf(style, k);
+      arrowPath(ctx, view, path, quiet, k);
+      targetRing(ctx, view, order.x, order.y, r, k, quiet);
       break;
     }
     case 'attack':
@@ -146,6 +159,7 @@ export function drawIntent(ctx, view, game, entry, { seed = 0 } = {}) {
       const plan = chargePlan(game, u, order.dir);
       arrowPath(ctx, view, plan.path, { ...style, width: style.width * 1.3 }, k);
       for (const [x, y] of plan.strike) {
+        if (!game.unitAt(x, y)) continue; // empty struck hexes show as danger tiles
         const [cx, cy] = view.center(x, y, view.standHeight(x, y));
         crosshair(ctx, cx, cy, view.scale * 0.42, r, { width: style.dark ? 2.4 * k : 1.7 * k });
       }
@@ -156,18 +170,19 @@ export function drawIntent(ctx, view, game, entry, { seed = 0 } = {}) {
       const [bx, by] = view.center(order.x, order.y, view.standHeight(order.x, order.y));
       const mx = (ax + bx) / 2;
       const my = Math.min(ay, by) - view.scale * 0.9;
+      const quiet = quietOf(style, k);
       ctx.save();
-      ctx.strokeStyle = INK;
-      ctx.lineWidth = style.width;
-      ctx.setLineDash(style.dash);
+      ctx.strokeStyle = quiet.color;
+      ctx.lineWidth = quiet.width;
+      ctx.setLineDash(quiet.dash);
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(ax, ay);
       ctx.quadraticCurveTo(mx, my, bx, by);
       ctx.stroke();
       ctx.restore();
-      head(ctx, [mx, my], [bx, by], 9 * k + 3, style.dark, k);
-      targetRing(ctx, view, order.x, order.y, r, k, style.dark);
+      head(ctx, [mx, my], [bx, by], 7 * k + 3, quiet.dark, k, quiet.color);
+      targetRing(ctx, view, order.x, order.y, r, k, quiet);
       break;
     }
     case 'build': {
@@ -201,7 +216,6 @@ function shotRay(ctx, view, game, x, y, dir, speed, style, r, k) {
   const all = rayCells(game, x, y, dir);
   if (!all.length) return;
   const now = all.slice(0, speed);
-  const later = all.slice(speed);
   const lift = view.scale * 0.55; // shots fly at chest height
   const pt = ([cx, cy]) => {
     const [sx, sy] = view.center(cx, cy, view.groundHeight(cx, cy));
@@ -211,12 +225,8 @@ function shotRay(ctx, view, game, x, y, dir, speed, style, r, k) {
   const pts = [start, ...now.map(pt)];
   dashed(ctx, pts, { width: style.width, dash: style.dark ? [2, 4 * k] : [0.5, 4 * k] });
   head(ctx, pts[pts.length - 2], pts[pts.length - 1], 8 * k + 3, style.dark, k);
-  if (later.length) {
-    // Where it goes after this turn: faint dots.
-    dashed(ctx, [pts[pts.length - 1], ...later.map(pt)], { width: 1 * k, dash: [0.5, 7 * k] });
-  }
-  // Mark the first unit or building in the shot's way.
-  for (const [cx, cy] of all) {
+  // Mark the first unit or building in its way this turn.
+  for (const [cx, cy] of now) {
     if (game.unitAt(cx, cy) || game.buildingAt(cx, cy)) {
       const [sx, sy] = view.center(cx, cy, view.standHeight(cx, cy));
       crosshair(ctx, sx, sy, view.scale * 0.42, r, { width: style.dark ? 2.4 * k : 1.7 * k });
@@ -238,6 +248,7 @@ function strikeMarks(ctx, view, game, u, dir, reach, style, r, k) {
     arrowPath(ctx, view, path, style, k);
   }
   for (const [cx, cy] of cells) {
+    if (!game.unitAt(cx, cy)) continue; // empty struck hexes show as danger tiles
     const [sx, sy] = view.center(cx, cy, view.standHeight(cx, cy));
     crosshair(ctx, sx, sy, view.scale * 0.42, r, { width: style.dark ? 2.4 * k : 1.7 * k });
   }

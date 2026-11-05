@@ -54,8 +54,8 @@ test/                 node:test suites (engine, campaign, iso view)
 
 ## The game
 
-Portrait only, built for an iPhone 13 Pro in Safari. Black ink on paper, nothing else: shading
-is hatching and stipple, never grey. Lines are drawn with a seeded wobble so they look inked by
+Portrait only, built for an iPhone 13 Pro in Safari. Soft charcoal ink on paper, with terrain
+sketched in a lighter pencil tone so units and threats stand out; shading is hatching and stipple. Lines are drawn with a seeded wobble so they look inked by
 hand but stay still (they "boil" between three variants a few times a second).
 
 - **Title → Campaign → Battle → Result.** The campaign is a list of levels; a level opens when the
@@ -66,9 +66,11 @@ hand but stay still (they "boil" between three variants a few times a second).
   Drag to pan, pinch to zoom (0.8–2.5×), ⌖ recenters.
 - **The enemy's plan is always on the board**, as in Into the Breach: heavy dashed arrows for its
   moves, crosshairs on hexes it will strike or shoot, a dotted ray for shots (solid for this turn's
-  4 hexes, faint after), arcs for teleports and dashed outlines for builds. Every queue entry has a
-  **numbered badge** (black for the CPU, white for you; a double ring for fast entries) and the
-  **turn-order strip** under the board lists the queue in run order. A **✕** on a unit means it dies
+  4 hexes), arcs for teleports and dashed outlines for builds. Its moves are drawn thin and light so
+  its attacks stand out, and every hex that will be struck or shot this turn is **hatched**. The
+  **turn-order strip** under the board lists the queue in run order; **hold it** to put a numbered
+  badge on every order on the board (dark for the CPU, white for you; a double ring for fast
+  entries). Selecting a unit (or tapping its chip) shows just its badge and fades the other orders. A **✕** on a unit means it dies
   if the turn runs as things stand (the turn is simulated on a copy).
 - **Giving orders:** tap one of your units (white). The unit card shows its stats and order; the
   hexes it can reach are outlined. Pick **Move**, **ϟ Quick**, **Strike / Shoot**, or its ability

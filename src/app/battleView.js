@@ -14,7 +14,7 @@ import { IsoView, SQUASH } from './iso.js';
 import { drawTile, drawTrees, drawBuilding, drawMine, drawObjectiveFlag, drawPaperDecor, penOf } from './art/terrain.js';
 import { drawFigure, escortStar } from './art/units.js';
 import {
-  reachMarks, selectBrackets, drawIntent, badge, dangerMark, bullet, strikeFlash, boom, label, aimArrows,
+  reachMarks, selectBrackets, drawIntent, dangerTiles, badge, dangerMark, bullet, strikeFlash, boom, label, aimArrows,
 } from './art/effects.js';
 import { getUnitType, DIRECTION_ANGLES } from '../engine/index.js';
 
@@ -116,6 +116,9 @@ export class BattleView {
    * @param {object} st
    *   game, seed (line boil 0..2), selectedId, reach {cells, teleport},
    *   aim {unit, dirs}, intents (bool), activeStep, danger (Set of unit ids),
+   *   threats ([[x, y]] hexes hit this turn), focusId (unit whose intent is
+   *   emphasised; others fade), showNumbers (all queue badges; otherwise
+   *   only the focused unit's and the step being played),
    *   anim { units: Map(id -> {px, py, h}), hidden: Set, bullets: [{px, py, h, angle}],
    *          effects: [{kind, ...}], rising: Map(buildingId -> 0..1) }
    */
@@ -130,6 +133,7 @@ export class BattleView {
     this.drawTerrain(ctx);
 
     // Ground marks.
+    if (st.threats?.length) dangerTiles(ctx, v, st.threats, seed);
     if (st.reach?.cells?.length) reachMarks(ctx, v, st.reach.cells, { teleport: st.reach.teleport, seed });
     const sel = st.selectedId != null ? g.getUnit(st.selectedId) : null;
     if (sel && !anim.units?.has(sel.id)) selectBrackets(ctx, v, sel.x, sel.y, seed);
@@ -143,13 +147,18 @@ export class BattleView {
     if (st.intents) {
       g.queue.forEach((entry, i) => {
         if (st.activeStep && i + 1 < st.activeStep) return;
+        const ownerId = entry.projectileId !== undefined ? g.getProjectile(entry.projectileId)?.ownerId : entry.unitId;
+        const focused = st.focusId == null || ownerId === st.focusId;
+        ctx.save();
+        if (!focused) ctx.globalAlpha = 0.28;
         const at = drawIntent(ctx, v, g, entry, { seed });
+        ctx.restore();
         if (!at) return;
-        const team = entry.projectileId !== undefined
-          ? (g.getUnit(g.getProjectile(entry.projectileId)?.ownerId)?.team ?? 'cpu')
-          : g.getUnit(entry.unitId)?.team;
+        const active = st.activeStep === i + 1;
+        if (!(st.showNumbers || active || (st.focusId != null && ownerId === st.focusId))) return;
+        const team = entry.projectileId !== undefined ? (g.getUnit(ownerId)?.team ?? 'cpu') : g.getUnit(entry.unitId)?.team;
         const fast = !!(entry.order?.quick || entry.order?.type === 'charge');
-        badges.push({ at, n: i + 1, dark: team === 'cpu', fast, active: st.activeStep === i + 1 });
+        badges.push({ at, n: i + 1, dark: team === 'cpu', fast, active });
       });
     }
     if (st.aim) aimArrows(ctx, v, st.aim.unit, st.aim.dirs, seed);

@@ -66,6 +66,8 @@ export function battleScreen(app, { levelId }) {
     selectedId: null,
     mode: null, // 'move' | 'quick' | 'attack' | 'charge' | 'teleport'
     preview: null,
+    threats: [], // hexes struck or shot through if the turn runs now
+    showNumbers: false, // while the queue strip is held
     undo: null, // snapshot from before the last End Turn
     playing: false,
     display: null, // the board being played back
@@ -109,6 +111,9 @@ export function battleScreen(app, { levelId }) {
   /** Call after anything changes: recomputes the preview and redraws the sheet. */
   function refresh() {
     s.preview = previewOf(game());
+    const seen = new Set();
+    s.threats = [...s.preview.struck, ...s.preview.projectiles.flatMap((path) => path.slice(1))]
+      .filter(([x, y]) => !seen.has(`${x},${y}`) && seen.add(`${x},${y}`));
     renderSheet();
     s.dirty = true;
   }
@@ -127,6 +132,9 @@ export function battleScreen(app, { levelId }) {
       intents: true,
       activeStep: s.playing ? s.activeStep : 0,
       danger: s.playing ? null : s.preview?.killed,
+      threats: s.playing ? null : s.threats,
+      focusId: s.playing ? null : s.selectedId,
+      showNumbers: s.showNumbers,
       anim: s.anim,
     });
     $('[data-recenter]').hidden = !view.cameraMoved;
@@ -197,7 +205,7 @@ export function battleScreen(app, { levelId }) {
   function renderQueue(g) {
     const q = $('[data-queue]');
     if (!g.queue.length) {
-      q.innerHTML = '<span class="empty">No orders yet: the queue runs left to right.</span>';
+      q.innerHTML = '<span class="empty">No orders yet. The queue runs left to right.</span>';
       return;
     }
     q.innerHTML = g.queue.map((entry, i) => {
@@ -276,7 +284,7 @@ export function battleScreen(app, { levelId }) {
     if (!u || u.team !== Teams.PLAYER) {
       a.innerHTML = u
         ? '<p class="note">Enemy unit. Its numbered marker shows when it acts.</p>'
-        : '<p class="note">Your units are white; the enemy is black.</p>';
+        : '<p class="note">Hold the turn order above to number the board.</p>';
       return;
     }
     const def = getUnitType(u.type);
@@ -667,7 +675,8 @@ export function battleScreen(app, { levelId }) {
       <div class="panel help">
         <h2>HOW TO PLAY</h2>
         <ul>
-          <li>The enemy (black) shows its whole plan. Each marker's <b>number</b> is when it happens.</li>
+          <li>The enemy (dark) shows its whole plan. Hatched hexes get hit this turn.</li>
+          <li><b>Hold the turn-order strip</b> to number every order on the board; tap a chip (or a unit) to see just that one.</li>
           <li>End Turn runs the <b>queue</b> left to right; each order finishes before the next.</li>
           <li>Your orders join the end. <b>ϟ Quick</b> moves and <b>» charges</b> jump to the front.</li>
           <li>Whoever gets to a hex first keeps it; the other unit stops.</li>
@@ -722,6 +731,16 @@ export function battleScreen(app, { levelId }) {
     const u = game().getUnit(Number(b.dataset.chip));
     if (u) select(u);
   });
+  // Hold the queue strip to show every order's number on the board.
+  const setNumbers = (on) => {
+    if (s.showNumbers !== on) {
+      s.showNumbers = on;
+      s.dirty = true;
+    }
+  };
+  $('[data-queue]').addEventListener('pointerdown', () => setNumbers(true));
+  const numbersOff = () => setNumbers(false);
+  for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, numbersOff);
   const onResize = () => { if (view.resize()) s.dirty = true; };
   window.addEventListener('resize', onResize);
 
@@ -740,11 +759,14 @@ export function battleScreen(app, { levelId }) {
     destroy() {
       detach();
       window.removeEventListener('resize', onResize);
+      for (const ev of ['pointerup', 'pointercancel']) window.removeEventListener(ev, numbersOff);
     },
     // For tests and the console.
     api: {
       get match() { return s.match; },
       get playing() { return s.playing; },
+      get showNumbers() { return s.showNumbers; },
+      get threats() { return s.threats; },
       get view() { return view; },
       select: (id) => select(game().getUnit(id)),
       action: onAction,

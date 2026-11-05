@@ -2,7 +2,8 @@
    hatching patterns, never grey. Portrait phone layout (iPhone 13 Pro). */
 
 :root {
-  --ink: #161412;
+  --ink: #3a3631;
+  --pencil: #9a948a;
   --paper: #f4f1ea;
   --hand: "Patrick Hand", "Marker Felt", "Chalkboard SE", "Comic Sans MS", cursive;
   --marker: "Permanent Marker", "Marker Felt", "Chalkboard SE", cursive;
@@ -61,7 +62,7 @@ button, .button {
   gap: 4px;
   min-height: 44px;
   padding: 0 10px;
-  border: 2px solid var(--ink);
+  border: 1.5px solid var(--ink);
   border-radius: 9px 6px 10px 5px / 6px 10px 5px 9px; /* a little hand-cut */
   background: var(--paper);
   color: var(--ink);
@@ -69,10 +70,10 @@ button, .button {
   letter-spacing: 0.04em;
   text-decoration: none;
   touch-action: manipulation;
-  box-shadow: 2px 3px 0 var(--ink);
+  box-shadow: 1.5px 2px 0 var(--ink);
   cursor: pointer;
 }
-button:active, .button:active { transform: translate(2px, 3px); box-shadow: none; }
+button:active, .button:active { transform: translate(1.5px, 2px); box-shadow: none; }
 button.primary { background: var(--ink); color: var(--paper); }
 button.active { background: var(--ink); color: var(--paper); }
 button:disabled {
@@ -109,7 +110,7 @@ button:disabled:active { transform: none; }
   gap: 8px;
   min-height: 46px;
   padding: 0 2px 4px;
-  border-bottom: 2.5px solid var(--ink);
+  border-bottom: 2px solid var(--ink);
 }
 .topbar .turn { display: flex; align-items: baseline; gap: 5px; font-family: var(--marker); }
 .topbar .turn small { font-size: 15px; }
@@ -120,8 +121,8 @@ button:disabled:active { transform: none; }
   font-family: var(--marker);
   font-size: 17px;
   letter-spacing: 0.06em;
-  border-left: 2px solid var(--ink);
-  border-right: 2px solid var(--ink);
+  border-left: 1.5px solid var(--pencil);
+  border-right: 1.5px solid var(--pencil);
   padding: 2px 6px;
 }
 
@@ -197,7 +198,7 @@ button:disabled:active { transform: none; }
   flex-direction: column;
   gap: 7px;
   padding-top: 7px;
-  border-top: 2.5px solid var(--ink);
+  border-top: 2px solid var(--ink);
 }
 
 .queue {
@@ -240,10 +241,10 @@ button:disabled:active { transform: none; }
   align-items: center;
   min-height: 66px;
   padding: 3px 8px 3px 3px;
-  border: 2px solid var(--ink);
+  border: 1.5px solid var(--ink);
   border-radius: 10px 6px 12px 5px / 6px 12px 5px 10px;
 }
-.card .portrait { flex: none; border-right: 2px solid var(--ink); }
+.card .portrait { flex: none; border-right: 1.5px solid var(--pencil); }
 .card.empty .portrait { background: var(--hatch); }
 .card .info { min-width: 0; flex: 1; }
 .card .name { font-family: var(--marker); font-size: 18px; letter-spacing: 0.05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -275,9 +276,9 @@ button:disabled:active { transform: none; }
 .panel {
   width: min(100%, 360px);
   padding: 18px;
-  border: 3px solid var(--ink);
+  border: 2px solid var(--ink);
   background: var(--paper);
-  box-shadow: 5px 6px 0 var(--ink);
+  box-shadow: 3px 4px 0 var(--ink);
   border-radius: 12px 6px 14px 7px / 7px 14px 6px 12px;
 }
 .panel h2 { margin: 0 0 14px; font: 26px var(--marker); text-align: center; letter-spacing: 0.08em; }
@@ -313,9 +314,9 @@ button:disabled:active { transform: none; }
   display: flex;
   gap: 12px;
   padding: 12px;
-  border: 2.5px solid var(--ink);
+  border: 2px solid var(--ink);
   border-radius: 12px 6px 14px 7px / 7px 14px 6px 12px;
-  box-shadow: 4px 5px 0 var(--ink);
+  box-shadow: 2.5px 3px 0 var(--ink);
 }
 .level .num {
   flex: none;
@@ -323,7 +324,7 @@ button:disabled:active { transform: none; }
   place-items: center;
   width: 52px;
   height: 52px;
-  border: 3px solid var(--ink);
+  border: 2px solid var(--ink);
   border-radius: 50%;
   font: 24px var(--marker);
   transform: rotate(-6deg);

@@ -1,10 +1,15 @@
-// The 1-bit hand-drawn drawing kit: black ink on paper, nothing else.
+// The hand-drawn drawing kit: ink and pencil on paper.
 //
 // Everything wobbles a little so it looks inked by hand, but the wobble is
 // seeded (rng(seed)) so a given line looks the same every frame. Shading is
-// done with hatching and stipple patterns, never grey.
+// done with hatching and stipple patterns, never flat grey fills.
 
-export const INK = '#161412';
+// Ink is a soft warm charcoal rather than black, for lower contrast; pencil
+// is the light tone for background linework (terrain), so the pieces inked on
+// top stand out.
+export const INK = '#3a3631';
+export const PENCIL = '#9a948a';
+export const SHADE = '#77716a'; // between the two: edges of the terrain
 export const PAPER = '#f4f1ea';
 
 /** Small deterministic PRNG (mulberry32). rng(seed)() -> [0, 1). */
