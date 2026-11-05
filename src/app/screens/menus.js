@@ -4,7 +4,7 @@ import { LEVELS, CAMPAIGN } from '../campaign.js';
 import { PixelView } from '../pixel/grid.js';
 import { Raster } from '../pixel/raster.js';
 import { C } from '../pixel/palette.js';
-import { drawBackdrop, drawTerrain, drawTrees, drawBuilding, drawGoal, drawUnit } from '../pixel/draw.js';
+import { drawBackdrop, drawTerrain, drawBuilding, drawGoal, drawUnit } from '../pixel/draw.js';
 import { h, esc } from '../dom.js';
 
 /** A small pixel diorama for the title screen, scaled up by whole device pixels. */
@@ -30,7 +30,6 @@ function drawVignette(canvas, w, hgt) {
     { at: [2, 2], u: { id: 94, type: 'pikeman', team: 'player' } },
   ];
   for (const [x, y] of v.drawOrder()) {
-    if (board.terrainAt(x, y) === 'forest') drawTrees(r, v, x, y);
     const b = board.buildingAt(x, y);
     if (b) drawBuilding(r, v, b);
     if (x === 0 && y === 0) drawGoal(r, v, 0, 0);

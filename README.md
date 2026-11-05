@@ -5,7 +5,7 @@ iPhone 13 Pro held vertically), hosted on GitHub Pages.
 
 No build step: plain ES modules served as static files.
 
-- **The game** is `index.html`: a single-player campaign, played on an isometric, colour
+- **The game** is `index.html`: a single-player campaign, played on a flat, colour
   pixel-art board.
 - **The debug UI** is `debug.html`: a flat board with editing tools, every scenario, and an
   event log.
@@ -44,7 +44,7 @@ src/app/              the game UI
   screens/            title / campaign screens, the battle screen
   battleView.js       draws each frame into a small art buffer and scales it up crisply;
                       camera (fit / zoom / pan) in whole device pixels
-  pixel/grid.js       integer hex geometry: tile masks, elevations, picking (no DOM)
+  pixel/grid.js       integer hex geometry: tile masks, picking (no DOM)
   pixel/raster.js     pixel primitives: dithers, lines, hex faces, 3x5 bitmap font
   pixel/palette.js    the colour palette and team colours
   pixel/sprites.js    unit and prop sprites, built from shapes on a pixel grid and outlined
@@ -61,24 +61,26 @@ Portrait only, built for an iPhone 13 Pro in Safari. Colour pixel art on light-m
 (square corners, bevels, the Silkscreen / Pixelify Sans fonts); your side is blue, the CPU red.
 The board is drawn at a low "art" resolution (about 350 x 300 pixels for the escort map) and
 scaled up by a whole number of device pixels (3 on an iPhone 13 Pro), so every pixel is a crisp,
-equal square. Hexes are a fixed 40 x 31 pixel mask on a 2:1 slope that tiles exactly; terrain
-height is a few pixels of elevation, with earth or stone sides. Tiles are textured (grass blades
-and flowers, cobbles, sand ripples, shimmering water); units, trees, mines and flags are sprites
-built in code from simple shapes plus a 1px outline. Units idle with a 1-pixel bob.
+equal square. Hexes are a fixed 40 x 31 pixel mask on a 2:1 slope that tiles exactly. Terrain is
+flat: every tile sits at the same height in one flat tone with a light texture (grass tufts, tree
+crowns seen from above, cobble seams, sand specks, rippling water), so units stand out. Units, mines
+and flags are sprites built in code from simple shapes plus a 1px outline. Units idle with a 1-pixel bob.
 
 - **Title → Campaign → Battle → Result.** The campaign is a list of levels; a level opens when the
   one before it is cleared. Progress is saved in `localStorage` (or kept for the session if
   storage is blocked).
-- **The board** is isometric: hexes are prisms whose height comes from their terrain (visual only:
-  water sits low, grass and forest high; buildings add a storey and units stand on the roof).
+- **The board** is flat: every terrain tile sits at the same height, and forest is drawn as flat
+  tree crowns rather than standing trees, so nothing hides a unit. Only buildings rise (a storey;
+  units stand on the roof).
   Drag to pan, pinch to zoom (0.8–2.5×), ⌖ recenters.
 - **The enemy's plan is always on the board**, as in Into the Breach: heavy dashed arrows for its
   moves, crosshairs on hexes it will strike or shoot, a dotted ray for shots (solid for this turn's
-  4 hexes), arcs for teleports and dashed outlines for builds. Its moves are drawn thin and light so
-  its attacks stand out, and every hex that will be struck or shot this turn is **hatched**. The
-  **turn-order strip** under the board lists the queue in run order; **hold it** to put a numbered
-  badge on every order on the board (dark for the CPU, white for you; a double ring for fast
-  entries). Selecting a unit (or tapping its chip) shows just its badge and fades the other orders. A **✕** on a unit means it dies
+  4 hexes), arcs for teleports and dashed outlines for builds. Every order is drawn at full strength
+  (moves in a finer dash than attacks), and every hex that will be struck or shot this turn is **hatched**. The
+  **turn-order strip** under the board lists the queue in run order. **Every queued order is always drawn on
+  the board with a numbered badge** for its place in the queue (dark for the CPU, white for you; a
+  yellow ring for fast entries; a unit with several orders gets a stack of badges). Selecting a unit
+  (or tapping its chip) draws its orders on top. During playback, finished steps drop off. A **✕** on a unit means it dies
   if the turn runs as things stand (the turn is simulated on a copy).
 - **Giving orders:** tap one of your units (white). The unit card shows its stats and order; the
   hexes it can reach are outlined. Pick **Move**, **ϟ Quick**, **Strike / Shoot**, or its ability
@@ -439,7 +441,7 @@ UI header, so two runs with the same orders can be compared at a glance.
     big map with a three-bridge river, a lake, roads and forest.
   - **Small skirmish (5×6)**: a pikeman and a gunslinger each on a tiny board: fast and sharp.
   Boards can be any size; scenarios with a map take their size from it. The board scales to fit
-  the phone screen (at most about two-thirds of its height). CPU orders are already staged when your turn starts (pink dashed
+  the phone screen (at most about two-thirds of its height). CPU orders are already staged when your turn starts (red dashed
   lines, listed first in the Queue tab); tap **End turn** when your orders are in. The header shows
   YOU WIN / YOU LOSE / DRAW when a side is wiped out.
 - **Move** mode: tap one of your units to select it (the hexes it can reach this turn light up),

@@ -1,4 +1,4 @@
-// Everything drawn on the pixel board, in colour: terrain tiles, trees,
+// Everything drawn on the pixel board, in colour: flat terrain tiles,
 // buildings, mines, the goal flag, units, order intents, markers and
 // playback effects. All drawing goes through a Raster on the art buffer.
 
@@ -28,11 +28,11 @@ function rng(seed) {
 // ---- terrain ----------------------------------------------------------------
 
 const LOOK = {
-  grass: { top: C.grass, edge: C.grassEdge, side: C.earth, lip: C.grass[2] },
-  forest: { top: C.forest, edge: C.forestEdge, side: C.earth, lip: C.forest[2] },
-  road: { top: C.road, edge: C.roadEdge, side: C.earth, lip: null },
-  sand: { top: C.sand, edge: C.sandEdge, side: C.earth, lip: null },
-  water: { top: C.water, edge: C.waterEdge, side: C.stone, lip: null },
+  grass: { top: C.grass, edge: C.grassEdge, side: C.earth },
+  forest: { top: C.forest, edge: C.forestEdge, side: C.earth },
+  road: { top: C.road, edge: C.roadEdge, side: C.earth },
+  sand: { top: C.sand, edge: C.sandEdge, side: C.earth },
+  water: { top: C.water, edge: C.waterEdge, side: C.stone },
 };
 const lookOf = (key) => LOOK[key] ?? LOOK.grass;
 
@@ -50,47 +50,32 @@ export function drawTerrain(r, v, frame = 0) {
 export function drawTile(r, v, x, y, frame = 0) {
   const key = v.game.terrainAt(x, y);
   const look = lookOf(key);
-  const h = v.groundHeight(x, y);
-  const [ox, oy] = v.origin(x, y, h);
-  const depth = h + BASE;
-  // Sides: lit on the left, shaded on the right, with strata lines.
-  const [sl, sm, sd] = look.side;
+  const [ox, oy] = v.origin(x, y);
+  // A thin edge under the tile (only seen along the board's front edge).
+  const [sl, , sd] = look.side;
   for (let c = 0; c < W; c++) {
     const y0 = oy + BOTTOM_ROW[c] + 1;
-    const left = c < W / 2;
-    for (let d = 0; d < depth; d++) {
-      let col;
-      if (d === depth - 1) col = OUTLINE;
-      else if (look.lip && d < 2) col = look.lip; // grass hangs over the edge
-      else if (d % 5 === 3) col = left ? sm : sd; // strata
-      else col = left ? sl : (PAT.half(ox + c, y0 + d) ? sm : sd);
-      r.px(ox + c, y0 + d, col);
-    }
-    if (c === W / 2 - 1 || c === W / 2) r.px(ox + c, y0 + depth - 2, OUTLINE);
+    for (let d = 0; d < BASE; d++) r.px(ox + c, y0 + d, d === BASE - 1 ? OUTLINE : c < W / 2 ? sl : sd);
   }
-  // Top face: base, lit along the top edges, shaded along the bottom ones.
-  const [tl, tb, td] = look.top;
+  // Top face: one flat tone, so units read clearly against it.
+  const tb = look.top[1];
   for (let row = 0; row < H; row++) {
     const [x0, x1] = MASK[row];
-    for (let c = x0; c < x1; c++) {
-      let col = tb;
-      if (!inMask(c, row - 2) || !inMask(c - 2, row)) col = tl;
-      else if (!inMask(c, row + 2) || !inMask(c + 2, row)) col = td;
-      r.px(ox + c, oy + row, col);
-    }
+    r.rect(ox + x0, oy + row, x1 - x0, 1, tb);
   }
   texture(r, key, ox, oy, x, y, look, frame);
-  // Outline: top edges in the tile's own dark tone (shared edges drawn once);
-  // right and bottom only at the board's edge or above lower ground.
+  // Outline in the tile's own dark tone: top edges by every tile (shared edges
+  // drawn once), right and bottom only at the board's edge.
   r.pixels(EDGES.top, ox, oy, look.edge);
-  const lowerOrEdge = (nx, ny) => !v.inBounds(nx, ny) || v.groundHeight(nx, ny) < h;
-  if (lowerOrEdge(...step(x, y, 'right'))) r.pixels(EDGES.right, ox, oy, look.edge);
-  if (lowerOrEdge(...step(x, y, 'down-left')) || lowerOrEdge(...step(x, y, 'down-right'))) r.pixels(EDGES.bottom, ox, oy, look.edge);
+  const edge = (nx, ny) => !v.inBounds(nx, ny);
+  if (edge(...step(x, y, 'right'))) r.pixels(EDGES.right, ox, oy, look.edge);
+  if (edge(...step(x, y, 'down-left')) || edge(...step(x, y, 'down-right'))) r.pixels(EDGES.bottom, ox, oy, look.edge);
 }
 
+/** A light, flat texture per terrain: just enough to tell the tiles apart. */
 function texture(r, key, ox, oy, x, y, look, frame) {
   const rand = rng((x * 73856093) ^ (y * 19349663) ^ (key.length * 83492791));
-  const [tl, tb, td] = look.top;
+  const [tl, , td] = look.top;
   // A random point well inside the face.
   const spot = (m = 5) => {
     for (let tries = 0; tries < 50; tries++) {
@@ -102,74 +87,55 @@ function texture(r, key, ox, oy, x, y, look, frame) {
     return [ox + W / 2, oy + Math.floor(H / 2)];
   };
   switch (key) {
-    case 'grass':
-    case 'forest': {
-      const n = key === 'forest' ? 7 : 9;
-      for (let i = 0; i < n; i++) {
+    case 'grass': {
+      for (let i = 0; i < 4; i++) {
         const [bx, by] = spot();
-        const c = rand() < 0.5 ? td : tl;
-        r.px(bx, by, c); r.px(bx, by - 1, c); r.px(bx + 2, by, c); r.px(bx + 1, by - 2, c); r.px(bx + 3, by - 1, c);
+        r.px(bx, by, td); r.px(bx + 2, by, td); r.px(bx + 1, by - 1, td);
       }
-      if (key === 'grass' && rand() < 0.45) {
-        for (let i = 0; i < 2; i++) {
-          const [fx, fy] = spot(6);
-          const c = rand() < 0.5 ? C.flowerY : C.flowerW;
-          r.px(fx, fy, c); r.px(fx - 1, fy, c); r.px(fx + 1, fy, c); r.px(fx, fy - 1, c); r.px(fx, fy + 1, td);
+      break;
+    }
+    case 'forest': {
+      // Tree crowns seen from above: flat dark rounds with a light fleck.
+      const crowns = [[-10, -3], [9, -4], [-1, 6], [11, 6], [-12, 7]];
+      for (const [dx, dy] of crowns) {
+        if (rand() < 0.25) continue;
+        const cx = ox + W / 2 + dx;
+        const cy = oy + Math.floor(H / 2) + dy;
+        for (let j = -2; j <= 2; j++) {
+          const hw = Math.abs(j) === 2 ? 2 : 3;
+          for (let i = -hw; i <= hw; i++) if (inMask(cx + i - ox, cy + j - oy)) r.px(cx + i, cy + j, td);
         }
+        r.px(cx - 1, cy - 1, tl);
       }
       break;
     }
     case 'road': {
-      // Cobbles in staggered rows.
-      for (let row = 3; row < H - 3; row += 4) {
-        const shift = (row / 4) % 2 ? 3 : 0;
-        for (let c = shift + 2; c < W - 3; c += 6) {
-          if (!inMask(c - 1, row) || !inMask(c + 4, row + 2)) continue;
-          r.rect(ox + c, oy + row, 4, 3, tb);
-          r.px(ox + c, oy + row, tl); r.px(ox + c + 1, oy + row, tl);
-          r.px(ox + c + 3, oy + row + 2, td); r.px(ox + c + 2, oy + row + 2, td);
-          r.px(ox + c - 1, oy + row + 1, td);
-        }
+      // Faint cobble seams.
+      for (let row = 5; row < H - 4; row += 6) {
+        const shift = (row / 6) % 2 ? 4 : 0;
+        for (let c = shift + 3; c < W - 3; c += 8) if (inMask(c, row) && inMask(c + 3, row)) r.rect(ox + c, oy + row, 3, 1, td);
       }
       break;
     }
     case 'sand': {
-      for (let i = 0; i < 14; i++) r.px(...spot(3), rand() < 0.6 ? td : tl);
-      for (let i = 0; i < 2; i++) {
-        const [sx, sy] = spot(7);
-        for (let k = 0; k < 7; k++) r.px(sx + k - 3, sy + (k % 4 < 2 ? 0 : -1), td);
-      }
+      for (let i = 0; i < 6; i++) r.px(...spot(3), td);
       break;
     }
     case 'water': {
-      // Bands of light ripples (shifted by the frame) and foam by the shore.
-      for (let row = 4; row < H - 3; row += 4) {
-        const n = 2;
-        for (let i = 0; i < n; i++) {
-          const len = 4 + Math.floor(rand() * 4);
-          const sx = Math.floor(rand() * W) + (frame ? 2 : 0);
-          for (let k = 0; k < len; k++) if (inMask(sx + k, row) && inMask(sx + k, row - 2)) r.px(ox + sx + k, oy + row, k === 0 || k === len - 1 ? tb : tl);
-        }
+      // A few light ripples, shifted by the frame.
+      for (let row = 7; row < H - 5; row += 8) {
+        const len = 4 + Math.floor(rand() * 3);
+        const sx = 8 + Math.floor(rand() * (W - 20)) + (frame ? 2 : 0);
+        for (let k = 0; k < len; k++) if (inMask(sx + k, row)) r.px(ox + sx + k, oy + row, tl);
       }
-      for (const [dx, dy] of EDGES.top) if ((dx + dy + frame) % 3 === 0 && inMask(dx, dy + 1)) r.px(ox + dx, oy + dy + 1, C.foam);
       break;
     }
     default:
-      for (let i = 0; i < 6; i++) r.px(...spot(), td);
+      for (let i = 0; i < 4; i++) r.px(...spot(), td);
   }
 }
 
 // ---- things on the board -------------------------------------------------------
-
-export function drawTrees(r, v, x, y) {
-  const [cx, cy] = v.center(x, y);
-  const rand = rng(x * 31 + y * 17 + 5);
-  const spots = [[-11, -5], [10, -2], [-1, 7]].slice(0, 2 + Math.floor(rand() * 2)).sort((a, b) => a[1] - b[1]);
-  for (const [dx, dy] of spots) {
-    const t = sprite.tree(rand() < 0.35 ? 1 : 0);
-    r.blit(t, cx + dx - 10, cy + dy - 24);
-  }
-}
 
 /** A building: stone walls with a window and door, a team-colour tiled roof and flag. */
 export function drawBuilding(r, v, b, rise = 1) {
@@ -307,14 +273,11 @@ export function target(r, v, x, y, frame = 0) {
   }
 }
 
+/** How an intent is drawn: every order at full strength, moves dashed finer than attacks. */
 function styleOf(team, kind) {
   const t = teamOf(team);
-  if (team === 'cpu') {
-    return kind === 'move'
-      ? { color: t.move, every: 3, on: 2, head: 6, hollow: false, thick: false }
-      : { color: t.order, every: 4, on: 3, head: 8, hollow: false, thick: true };
-  }
-  return { color: t.order, every: 3, on: 2, head: 8, hollow: true, thick: kind !== 'move' };
+  const move = kind === 'move';
+  return { color: t.order, every: move ? 3 : 4, on: move ? 2 : 3, head: 8, hollow: team !== 'cpu', thick: true };
 }
 
 function path(r, pts, st) {

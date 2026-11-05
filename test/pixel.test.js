@@ -2,7 +2,7 @@
 // every hex picks back to itself, and directions snap correctly.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PixelView, MASK, W, H, V, inMask, BUILDING_HEIGHT, ELEVATION, elevationOf } from '../src/app/pixel/grid.js';
+import { PixelView, MASK, W, H, V, inMask, BUILDING_HEIGHT, GROUND } from '../src/app/pixel/grid.js';
 import { scenarios } from '../src/scenarios.js';
 import { Game, step, ALL_DIRECTIONS } from '../src/engine/index.js';
 import { nearestDirection } from '../src/app/shared.js';
@@ -59,11 +59,12 @@ test('a building lifts the hex: its roof picks the hex, units stand on it', () =
   assert.deepEqual(v.pick(...v.center(1, 1, v.standHeight(1, 1))), { x: 1, y: 1 });
 });
 
-test('heights are whole pixels; water sits low; off-board is grass height', () => {
-  assert.ok(ELEVATION.water < ELEVATION.grass);
-  assert.equal(elevationOf('no-such-type'), 9);
-  const v = new PixelView(new Game({ width: 2, height: 2 }));
-  assert.equal(v.groundHeight(-1, 5), ELEVATION.grass);
+test('the board is flat: every tile, water included, sits at the same height', () => {
+  const g = new Game({ width: 3, height: 2 });
+  g.state.terrain[0] = 'water';
+  g.state.terrain[1] = 'forest';
+  const v = new PixelView(g);
+  for (const [x, y] of [[0, 0], [1, 0], [2, 1], [-1, 5]]) assert.equal(v.groundHeight(x, y), GROUND);
   for (const [x, y] of [[0, 0], [1, 1]]) assert.ok(v.center(x, y).every(Number.isInteger));
   assert.equal(V, 21);
 });

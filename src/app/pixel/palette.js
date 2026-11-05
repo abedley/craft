@@ -65,9 +65,9 @@ export const U = {
 
 /** Team colours: main, light, dark, plus marker colours for its orders. */
 export const TEAM = {
-  player: { main: '#3f7fe6', light: '#86b6ff', dark: '#24508f', order: '#2f6fe0', move: '#2f6fe0', plate: '#3f7fe6',
+  player: { main: '#3f7fe6', light: '#86b6ff', dark: '#24508f', order: '#2f6fe0', plate: '#3f7fe6',
     unit: ['#93b2da', '#5f83bb', '#41608f', '#2c3f63'] },
-  cpu: { main: '#dc4b3c', light: '#ff8f72', dark: '#8f2b23', order: '#e23b2e', move: '#c9786e', plate: '#dc4b3c',
+  cpu: { main: '#dc4b3c', light: '#ff8f72', dark: '#8f2b23', order: '#e23b2e', plate: '#dc4b3c',
     unit: ['#e5a08a', '#c3654f', '#8e4437', '#5c2c26'] },
 };
 

@@ -6,16 +6,16 @@
 // art pixel is a crisp, equal square. The terrain is cached in its own
 // art-sized buffer and only redrawn when the terrain changes.
 //
-// Layers, back to front: terrain; ground marks (danger tiles, reach,
-// selection, strike flashes); things in depth order (trees, buildings,
-// mines, the goal flag, units, shots); intents and their number badges;
-// unit marks; playback effects.
+// Layers, back to front: flat terrain; ground marks (danger tiles, reach,
+// selection, strike flashes); things in depth order (buildings, mines, the
+// goal flag, units, shots); every queued order's intent and its number
+// badge; unit marks; playback effects.
 
 import { PixelView } from './pixel/grid.js';
-import { Raster, PAT } from './pixel/raster.js';
+import { Raster } from './pixel/raster.js';
 import { C } from './pixel/palette.js';
 import {
-  drawBackdrop, CHEST, drawTerrain, drawTrees, drawBuilding, drawMine, drawGoal, drawUnit, drawBullet, escortStar, dangerMark,
+  drawBackdrop, CHEST, drawTerrain, drawBuilding, drawMine, drawGoal, drawUnit, drawBullet, escortStar, dangerMark,
   reachMarks, selectRing, dangerTiles, drawIntent, badge, aimArrows, boom, strikeFlash, dirAngle,
 } from './pixel/draw.js';
 import { getUnitType } from '../engine/index.js';
@@ -166,7 +166,7 @@ export class BattleView {
    * @param {object} st
    *   game, frame (0/1: idle bob and blink), selectedId, reach {cells, teleport},
    *   aim {unit, dirs}, intents (bool), activeStep, danger (Set of unit ids),
-   *   threats ([[x, y]]), focusId, showNumbers,
+   *   threats ([[x, y]]), focusId (drawn on top),
    *   anim { units: Map(id -> [ax, ay] feet), hidden: Set, bullets: [{id, ax, ay, angle}],
    *          effects: [{kind, ...}] (art px), rising: Map(buildingId -> 0..1) }
    */
@@ -190,22 +190,23 @@ export class BattleView {
 
     this.drawThings(r, g, anim, frame);
 
-    // Intents (unfocused ones dithered out) and their badges.
+    // Every queued order's intent, each numbered with its place in the queue.
+    // The selected unit's orders are drawn last so they sit on top.
     const badges = [];
     if (st.intents) {
-      g.queue.forEach((entry, i) => {
-        if (st.activeStep && i + 1 < st.activeStep) return;
+      const entries = g.queue.map((entry, i) => {
         const ownerId = entry.projectileId !== undefined ? g.getProjectile(entry.projectileId)?.ownerId : entry.unitId;
-        r.fade = st.focusId != null && ownerId !== st.focusId ? PAT.quarter : null;
+        return { entry, n: i + 1, ownerId };
+      }).filter(({ n }) => !(st.activeStep && n < st.activeStep));
+      const focused = ({ ownerId }) => st.focusId != null && ownerId === st.focusId;
+      entries.sort((a, b) => focused(a) - focused(b));
+      for (const { entry, n, ownerId } of entries) {
         const at = drawIntent(r, v, g, entry, frame);
-        r.fade = null;
-        if (!at) return;
-        const active = st.activeStep === i + 1;
-        if (!(st.showNumbers || active || (st.focusId != null && ownerId === st.focusId))) return;
+        if (!at) continue;
         const team = g.getUnit(ownerId)?.team ?? 'cpu';
         const fast = !!(entry.order?.quick || entry.order?.type === 'charge');
-        badges.push({ at, n: i + 1, team, fast, active });
-      });
+        badges.push({ at, n, team, fast, active: st.activeStep === n });
+      }
     }
     if (st.aim) aimArrows(r, v, st.aim.unit, st.aim.dirs);
 
@@ -218,7 +219,14 @@ export class BattleView {
       if (st.danger?.has(u.id)) dangerMark(r, fx, fy);
       if (u.channel?.kind === 'build') r.label(`${u.channel.progress}/${getUnitType(u.type).build.turns}`, fx, fy + 6);
     }
-    for (const b of badges) badge(r, b.at[0], b.at[1], b.n, b);
+    // Badges that land on the same spot (one unit, several orders) stack upward.
+    const taken = new Map();
+    for (const b of badges.sort((p, q) => p.n - q.n)) {
+      const k = `${b.at[0]},${b.at[1]}`;
+      const i = taken.get(k) ?? 0;
+      taken.set(k, i + 1);
+      badge(r, b.at[0], b.at[1] - i * 20, b.n, b);
+    }
 
     for (const e of anim.effects ?? []) {
       if (e.kind === 'boom') boom(r, e.x, e.y, e.size ?? 1, e.t);
@@ -241,14 +249,11 @@ export class BattleView {
     return this.grid.center(u.x, u.y, this.grid.standHeight(u.x, u.y));
   }
 
-  /** Trees, buildings, mines, the flag, units and shots, back to front. */
+  /** Buildings, mines, the flag, units and shots, back to front. */
   drawThings(r, g, anim, frame) {
     const v = this.grid;
     const items = [];
     const depth = (x, y) => v.center(x, y)[1];
-    for (const [x, y] of v.drawOrder()) {
-      if (g.terrainAt(x, y) === 'forest') items.push({ d: depth(x, y) - 0.5, draw: () => drawTrees(r, v, x, y) });
-    }
     for (const b of g.buildings) {
       items.push({ d: depth(b.x, b.y) - 0.3, draw: () => drawBuilding(r, v, b, anim.rising?.get(b.id) ?? 1) });
     }

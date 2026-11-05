@@ -1,33 +1,24 @@
 // Integer pixel geometry for the pixel-art board (no DOM; testable in node).
 //
 // Pointy-topped hexes (odd-r layout, see engine/hex.js) drawn on a 2:1
-// isometric slope. Every hex's top face is the same pixel mask, W wide and
-// H tall, and the masks tile exactly: a hex sits at
-//   ax = x * W + (y odd ? W / 2 : 0),   ay = y * V - elevation
+// slope. Every hex's top face is the same pixel mask, W wide and H tall,
+// and the masks tile exactly: a hex sits at
+//   ax = x * W + (y odd ? W / 2 : 0),   ay = y * V - GROUND
 // in "art pixels" (the low-res buffer the board is drawn in, which is then
-// scaled up by a whole number of device pixels).
-
-import { getTerrainType } from '../../engine/terrain.js';
+// scaled up by a whole number of device pixels). The terrain is flat: every
+// tile sits at the same height, so nothing on the ground hides a unit. Only
+// buildings rise above it.
 
 export const W = 40; // hex width (must be 4 * Q so the slopes are 2:1 and tile)
 export const Q = 10; // rows in each sloped part (top and bottom)
 export const S = 11; // rows in the straight middle
 export const H = 2 * Q + S; // 31: hex height
 export const V = Q + S; // 21: row step
-export const BASE = 7; // prism depth below ground level
+export const BASE = 4; // depth of the board's edge below the ground
 
-/** Elevation (px) of each terrain type's top face. */
-export const ELEVATION = { water: 3, sand: 8, road: 8, grass: 9, forest: 9 };
+/** Height (px) of the ground: the same for every terrain type, so the board is flat. */
+export const GROUND = 4;
 export const BUILDING_HEIGHT = 17; // a building's roof above its hex
-
-export function elevationOf(key) {
-  if (key in ELEVATION) return ELEVATION[key];
-  try {
-    return getTerrainType(key).walkable ? 9 : 3;
-  } catch {
-    return 9;
-  }
-}
 
 /** Half-width of the mask on row r (the row spans [W/2 - hw, W/2 + hw)). */
 function halfWidth(r) {
@@ -128,10 +119,9 @@ export class PixelView {
     return x >= 0 && y >= 0 && x < this.game.width && y < this.game.height;
   }
 
-  /** Elevation of a hex's ground (off the board: grass height). */
-  groundHeight(x, y) {
-    if (!this.inBounds(x, y)) return ELEVATION.grass;
-    return elevationOf(this.game.terrainAt(x, y));
+  /** Height of a hex's ground (the board is flat, so always GROUND). */
+  groundHeight() {
+    return GROUND;
   }
 
   /** Height a unit stands at (on the roof if there's a building). */
