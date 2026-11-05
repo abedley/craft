@@ -280,12 +280,13 @@ function styleOf(team, kind) {
   return { color: t.order, every: move ? 3 : 4, on: move ? 2 : 3, head: 8, hollow: team !== 'cpu', thick: true };
 }
 
+/** A dashed arrow through hex centres: it starts at the first hex's centre and its tip lands on the last's. */
 function path(r, pts, st) {
   if (pts.length < 2) return;
   const [ax, ay] = pts[pts.length - 2];
   const [bx, by] = pts[pts.length - 1];
-  const end = [ax + (bx - ax) * 0.78, ay + (by - ay) * 0.78];
-  const all = [...pts.slice(0, -1), end];
+  const end = [bx, by];
+  const all = pts;
   let phase = 0;
   for (let i = 1; i < all.length; i++) {
     const [x0, y0] = all[i - 1];
@@ -370,10 +371,7 @@ export function drawIntent(r, v, game, entry, frame = 0) {
 function shotRay(r, v, game, x, y, dir, speed, st, frame) {
   const now = rayCells(game, x, y, dir, speed);
   if (!now.length) return;
-  const pt = ([cx, cy]) => {
-    const [sx, sy] = v.center(cx, cy);
-    return [sx, sy - CHEST];
-  };
+  const pt = ([cx, cy]) => v.center(cx, cy, v.standHeight(cx, cy));
   path(r, [pt([x, y]), ...now.map(pt)], st);
   for (const [cx, cy] of now) {
     if (game.unitAt(cx, cy) || game.buildingAt(cx, cy)) {
