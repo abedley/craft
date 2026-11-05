@@ -9,23 +9,23 @@
 
 import { getTerrainType } from '../../engine/terrain.js';
 
-export const W = 20; // hex width (must be 4 * Q so the slopes are 2:1 and tile)
-export const Q = 5; // rows in each sloped part (top and bottom)
-export const S = 6; // rows in the straight middle
-export const H = 2 * Q + S; // 16: hex height
-export const V = Q + S; // 11: row step
-export const BASE = 4; // prism depth below ground level
+export const W = 40; // hex width (must be 4 * Q so the slopes are 2:1 and tile)
+export const Q = 10; // rows in each sloped part (top and bottom)
+export const S = 11; // rows in the straight middle
+export const H = 2 * Q + S; // 31: hex height
+export const V = Q + S; // 21: row step
+export const BASE = 7; // prism depth below ground level
 
 /** Elevation (px) of each terrain type's top face. */
-export const ELEVATION = { water: 2, sand: 5, road: 5, grass: 6, forest: 6 };
-export const BUILDING_HEIGHT = 11; // a building's roof above its hex
+export const ELEVATION = { water: 3, sand: 8, road: 8, grass: 9, forest: 9 };
+export const BUILDING_HEIGHT = 17; // a building's roof above its hex
 
 export function elevationOf(key) {
   if (key in ELEVATION) return ELEVATION[key];
   try {
-    return getTerrainType(key).walkable ? 6 : 2;
+    return getTerrainType(key).walkable ? 9 : 3;
   } catch {
-    return 6;
+    return 9;
   }
 }
 
@@ -42,6 +42,8 @@ export const MASK = Object.freeze(
 );
 
 export function inMask(dx, dy) {
+  dx = Math.floor(dx);
+  dy = Math.floor(dy);
   if (dy < 0 || dy >= H) return false;
   const [x0, x1] = MASK[dy];
   return dx >= x0 && dx < x1;
@@ -107,7 +109,7 @@ export class PixelView {
    * @param {{width:number,height:number,terrainAt:Function,buildingAt?:Function}} game
    * @param {{top?:number,side?:number,bottom?:number}} [margin] art px round the board
    */
-  constructor(game, { top = 30, side = 6, bottom = 6 } = {}) {
+  constructor(game, { top = 50, side = 8, bottom = 8 } = {}) {
     this.game = game;
     this.margin = { top, side, bottom };
   }
@@ -118,7 +120,7 @@ export class PixelView {
     const m = this.margin;
     return {
       w: w * W + (h > 1 ? W / 2 : 0) + m.side * 2,
-      h: (h - 1) * V + H + BASE + 6 + m.top + m.bottom,
+      h: (h - 1) * V + H + BASE + 12 + m.top + m.bottom,
     };
   }
 
@@ -141,7 +143,7 @@ export class PixelView {
   origin(x, y, h = this.groundHeight(x, y)) {
     return [
       this.margin.side + x * W + (y & 1 ? W / 2 : 0),
-      this.margin.top + 8 + y * V - h,
+      this.margin.top + 12 + y * V - h,
     ];
   }
 

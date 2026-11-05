@@ -1,4 +1,4 @@
-// The battle board renderer: monochrome pixel art.
+// The battle board renderer: colour pixel art.
 //
 // Each frame is drawn into a small "art buffer" (one pixel per art pixel,
 // about 220 x 200 for the escort map) and then scaled up onto the screen
@@ -12,9 +12,10 @@
 // unit marks; playback effects.
 
 import { PixelView } from './pixel/grid.js';
-import { Raster, FRAME, PAT } from './pixel/raster.js';
+import { Raster, PAT } from './pixel/raster.js';
+import { C } from './pixel/palette.js';
 import {
-  drawTerrain, drawTrees, drawBuilding, drawMine, drawGoal, drawUnit, drawBullet, escortStar, dangerMark,
+  drawBackdrop, CHEST, drawTerrain, drawTrees, drawBuilding, drawMine, drawGoal, drawUnit, drawBullet, escortStar, dangerMark,
   reachMarks, selectRing, dangerTiles, drawIntent, badge, aimArrows, boom, strikeFlash, dirAngle,
 } from './pixel/draw.js';
 import { getUnitType } from '../engine/index.js';
@@ -28,7 +29,8 @@ export class BattleView {
     this.grid = null;
     this.art = document.createElement('canvas');
     this.artCtx = this.art.getContext('2d');
-    this.terrain = document.createElement('canvas');
+    // Two terrain frames (the water shimmers between them).
+    this.terrain = [document.createElement('canvas'), document.createElement('canvas')];
     this.terrainKey = null;
     this.cssW = 0;
     this.cssH = 0;
@@ -49,8 +51,10 @@ export class BattleView {
       const { w, h } = this.grid.size;
       this.art.width = w;
       this.art.height = h;
-      this.terrain.width = w;
-      this.terrain.height = h;
+      for (const t of this.terrain) {
+        t.width = w;
+        t.height = h;
+      }
       this.terrainKey = null;
       if (this.cssW) this.fit();
     }
@@ -150,9 +154,11 @@ export class BattleView {
     const g = this.grid.game;
     const key = `${g.width}x${g.height}|${g.terrain.join(',')}`;
     if (key === this.terrainKey) return;
-    const ctx = this.terrain.getContext('2d');
-    ctx.clearRect(0, 0, this.terrain.width, this.terrain.height);
-    drawTerrain(new Raster(ctx), this.grid);
+    this.terrain.forEach((t, frame) => {
+      const r = new Raster(t.getContext('2d'));
+      drawBackdrop(r, t.width, t.height);
+      drawTerrain(r, this.grid, frame);
+    });
     this.terrainKey = key;
   }
 
@@ -172,9 +178,7 @@ export class BattleView {
     const frame = st.frame ?? 0;
     this.drawTerrainCache();
     const a = this.artCtx;
-    a.fillStyle = FRAME;
-    a.fillRect(0, 0, this.art.width, this.art.height);
-    a.drawImage(this.terrain, 0, 0);
+    a.drawImage(this.terrain[frame % 2], 0, 0);
     const r = new Raster(a);
 
     // Ground marks.
@@ -193,14 +197,14 @@ export class BattleView {
         if (st.activeStep && i + 1 < st.activeStep) return;
         const ownerId = entry.projectileId !== undefined ? g.getProjectile(entry.projectileId)?.ownerId : entry.unitId;
         r.fade = st.focusId != null && ownerId !== st.focusId ? PAT.quarter : null;
-        const at = drawIntent(r, v, g, entry);
+        const at = drawIntent(r, v, g, entry, frame);
         r.fade = null;
         if (!at) return;
         const active = st.activeStep === i + 1;
         if (!(st.showNumbers || active || (st.focusId != null && ownerId === st.focusId))) return;
         const team = g.getUnit(ownerId)?.team ?? 'cpu';
         const fast = !!(entry.order?.quick || entry.order?.type === 'charge');
-        badges.push({ at, n: i + 1, dark: team === 'cpu', fast, active });
+        badges.push({ at, n: i + 1, team, fast, active });
       });
     }
     if (st.aim) aimArrows(r, v, st.aim.unit, st.aim.dirs);
@@ -212,20 +216,20 @@ export class BattleView {
       const [fx, fy] = this.footOf(u, anim);
       if (u.id === vipId) escortStar(r, fx, fy);
       if (st.danger?.has(u.id)) dangerMark(r, fx, fy);
-      if (u.channel?.kind === 'build') r.label(`${u.channel.progress}/${getUnitType(u.type).build.turns}`, fx, fy + 4);
+      if (u.channel?.kind === 'build') r.label(`${u.channel.progress}/${getUnitType(u.type).build.turns}`, fx, fy + 6);
     }
     for (const b of badges) badge(r, b.at[0], b.at[1], b.n, b);
 
     for (const e of anim.effects ?? []) {
       if (e.kind === 'boom') boom(r, e.x, e.y, e.size ?? 1, e.t);
-      if (e.kind === 'text') r.label(e.text, e.x, Math.round(e.y - e.t * 6), { dark: !e.light });
+      if (e.kind === 'text') r.label(e.text, e.x, Math.round(e.y - e.t * 10), e.dark ? { fill: C.target } : {});
     }
 
     // Scale the art buffer up onto the screen.
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.imageSmoothingEnabled = false;
-    ctx.fillStyle = FRAME;
+    ctx.fillStyle = C.board;
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.drawImage(this.art, this.off[0], this.off[1], this.art.width * this.k, this.art.height * this.k);
   }
@@ -264,9 +268,9 @@ export class BattleView {
     for (const p of g.projectiles) {
       if (flying.has(p.id)) continue;
       const [bx, by] = v.center(p.x, p.y);
-      items.push({ d: by + 0.2, draw: () => drawBullet(r, bx, by - 9, dirAngle(p.dir)) });
+      items.push({ d: by + 0.2, draw: () => drawBullet(r, bx, by - CHEST, dirAngle(p.dir)) });
     }
-    for (const b of anim.bullets ?? []) items.push({ d: b.ay + 9.2, draw: () => drawBullet(r, b.ax, b.ay, b.angle) });
+    for (const b of anim.bullets ?? []) items.push({ d: b.ay + CHEST + 0.2, draw: () => drawBullet(r, b.ax, b.ay, b.angle) });
     items.sort((a, b) => a.d - b.d);
     for (const it of items) it.draw();
   }

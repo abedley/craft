@@ -16,8 +16,9 @@ import { BattleView } from '../battleView.js';
 import { attachGestures } from '../controls.js';
 import { nearestDirection, previewOf, moveReach, teleportReach } from '../shared.js';
 import { unitSprite } from '../pixel/sprites.js';
-import { FRAME } from '../pixel/raster.js';
+import { C } from '../pixel/palette.js';
 import { BUILDING_HEIGHT } from '../pixel/grid.js';
+import { CHEST } from '../pixel/draw.js';
 import { h, esc, crispCanvas } from '../dom.js';
 
 const BOB_MS = 500; // idle animation frame time (units bob, the selection blinks)
@@ -256,7 +257,7 @@ export function battleScreen(app, { levelId }) {
     const pc = $('[data-portrait]');
     const ctx = crispCanvas(pc, 52, 60);
     ctx.imageSmoothingEnabled = false;
-    ctx.fillStyle = FRAME;
+    ctx.fillStyle = C.board;
     ctx.fillRect(0, 0, 52, 60);
     if (!u) {
       $('[data-card]').classList.add('empty');
@@ -270,7 +271,7 @@ export function battleScreen(app, { levelId }) {
     $('[data-card]').classList.remove('empty');
     const def = getUnitType(u.type);
     // The unit's sprite at 2x (the canvas scales to device pixels), facing right.
-    ctx.drawImage(unitSprite(u.type, u.team), 26 - 15, 56 - 44, 30, 44);
+    ctx.drawImage(unitSprite(u.type, u.team), 26 - 13 * 1.5, 59 - 40 * 1.5, 26 * 1.5, 40 * 1.5);
     const vip = g.objective?.kind === 'escort' && g.objective.unitId === u.id;
     $('[data-name]').innerHTML = `${esc(def.name.toUpperCase())}${u.team === Teams.CPU ? ' <span class="tag dark">ENEMY</span>' : ''}${vip ? ' <span class="tag">★ ESCORT</span>' : ''}`;
     $('[data-stats]').textContent = statsOf(u);
@@ -450,7 +451,7 @@ export function battleScreen(app, { levelId }) {
   const feet = (g, x, y) => view.grid.center(x, y, standH(g, x, y));
   const screenOf = (g, x, y, lift = 0.5) => {
     const [ax, ay] = feet(g, x, y);
-    return [ax, ay - Math.round(lift * 17)];
+    return [ax, ay - Math.round(lift * 30)];
   };
 
   /** Show an effect for `ms` without waiting for it. */
@@ -484,7 +485,7 @@ export function battleScreen(app, { levelId }) {
           const [x0, y0] = feet(g, ax, ay);
           const [x1, y1] = feet(g, bx, by);
           await tween(fast ? 95 : 190, (t) => {
-            const hop = fast ? 0 : Math.round(Math.sin(Math.PI * t) * 4);
+            const hop = fast ? 0 : Math.round(Math.sin(Math.PI * t) * 7);
             s.anim.units.set(u.id, [Math.round(x0 + (x1 - x0) * t), Math.round(y0 + (y1 - y0) * t) - hop]);
           });
           [u.x, u.y] = [bx, by];
@@ -516,7 +517,7 @@ export function battleScreen(app, { levelId }) {
           const [bx, by] = e.path[i];
           const [x0, y0] = view.grid.center(ax, ay);
           const [x1, y1] = view.grid.center(bx, by);
-          await tween(70, (t) => Object.assign(b, { ax: Math.round(x0 + (x1 - x0) * t), ay: Math.round(y0 + (y1 - y0) * t) - 9 }));
+          await tween(70, (t) => Object.assign(b, { ax: Math.round(x0 + (x1 - x0) * t), ay: Math.round(y0 + (y1 - y0) * t) - CHEST }));
           [p.x, p.y] = [bx, by];
         }
         s.anim.bullets.splice(s.anim.bullets.indexOf(b), 1);

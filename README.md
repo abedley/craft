@@ -5,7 +5,7 @@ iPhone 13 Pro held vertically), hosted on GitHub Pages.
 
 No build step: plain ES modules served as static files.
 
-- **The game** is `index.html`: a single-player campaign, played on an isometric, monochrome
+- **The game** is `index.html`: a single-player campaign, played on an isometric, colour
   pixel-art board.
 - **The debug UI** is `debug.html`: a flat board with editing tools, every scenario, and an
   event log.
@@ -24,7 +24,7 @@ To try it on a phone, serve on your LAN and open `http://<your-ip>:8000`.
 ```
 index.html            the game shell
 debug.html            debug UI shell
-css/game.css          the game's dark pixel-panel styles
+css/game.css          the game's light-mode pixel-panel styles
 css/style.css         debug UI styles (safe areas, 44px touch targets)
 src/engine/           deterministic game engine (no DOM)
   game.js             Game state, order queue, tick(), projectiles
@@ -46,22 +46,25 @@ src/app/              the game UI
                       camera (fit / zoom / pan) in whole device pixels
   pixel/grid.js       integer hex geometry: tile masks, elevations, picking (no DOM)
   pixel/raster.js     pixel primitives: dithers, lines, hex faces, 3x5 bitmap font
-  pixel/sprites.js    unit and prop sprites, written as text
+  pixel/palette.js    the colour palette and team colours
+  pixel/sprites.js    unit and prop sprites, built from shapes on a pixel grid and outlined
   pixel/draw.js       terrain, units, intents, markers and playback effects
   controls.js         tap / pan / pinch gestures
   shared.js           helpers used by both UIs (direction snapping, preview, paths)
 src/scenarios.js      preset boards: matches and rule demos
-test/                 node:test suites (engine, campaign, iso view)
+test/                 node:test suites (engine, campaign, pixel geometry, sprites)
 ```
 
 ## The game
 
-Portrait only, built for an iPhone 13 Pro in Safari. Monochrome pixel art: two tones (a warm
-light and a soft charcoal) plus dithering, on dark bevelled panels. The board is drawn at a low
-"art" resolution (about 180 x 170 pixels for the escort map) and scaled up by a whole number of
-device pixels, so every pixel is a crisp, equal square. Hexes are a fixed 20 x 16 pixel mask on a
-2:1 slope that tiles exactly; terrain height is a few pixels of elevation. Units idle with a
-1-pixel bob; your units are light with a ring base, the CPU's are dark on a solid base.
+Portrait only, built for an iPhone 13 Pro in Safari. Colour pixel art on light-mode pixel panels
+(square corners, bevels, the Silkscreen / Pixelify Sans fonts); your side is blue, the CPU red.
+The board is drawn at a low "art" resolution (about 350 x 300 pixels for the escort map) and
+scaled up by a whole number of device pixels (3 on an iPhone 13 Pro), so every pixel is a crisp,
+equal square. Hexes are a fixed 40 x 31 pixel mask on a 2:1 slope that tiles exactly; terrain
+height is a few pixels of elevation, with earth or stone sides. Tiles are textured (grass blades
+and flowers, cobbles, sand ripples, shimmering water); units, trees, mines and flags are sprites
+built in code from simple shapes plus a 1px outline. Units idle with a 1-pixel bob.
 
 - **Title → Campaign → Battle → Result.** The campaign is a list of levels; a level opens when the
   one before it is cleared. Progress is saved in `localStorage` (or kept for the session if

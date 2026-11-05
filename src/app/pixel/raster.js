@@ -3,10 +3,7 @@
 // lands on whole pixels, so the buffer scales up crisp.
 
 import { MASK, H } from './grid.js';
-
-export const LIGHT = '#e6e0d2';
-export const DARK = '#34312d';
-export const FRAME = '#25231f'; // the board's background (darker than the UI panels)
+import { C } from './palette.js';
 
 /** Dither patterns, in absolute pixel coordinates so they line up across tiles. */
 export const PAT = {
@@ -97,7 +94,7 @@ export class Raster {
   }
 
   /** A small filled (or hollow) arrowhead with its tip at (x, y), pointing along angle a. */
-  arrowhead(x, y, a, size, c, { hollow = false, fill = LIGHT } = {}) {
+  arrowhead(x, y, a, size, c, { hollow = false, fill = C.white } = {}) {
     const back = [x - Math.cos(a) * size, y - Math.sin(a) * size];
     const nx = -Math.sin(a) * size * 0.6;
     const ny = Math.cos(a) * size * 0.6;
@@ -125,30 +122,31 @@ export class Raster {
     }
   }
 
-  /** Draw text in the 3x5 font with its top-left at (x, y). */
-  text(str, x, y, c) {
+  /** Draw text in the 3x5 font, `scale` art px per font pixel, top-left at (x, y). */
+  text(str, x, y, c, scale = 2) {
     let cx = Math.round(x);
+    y = Math.round(y);
     for (const ch of String(str).toUpperCase()) {
       const g = FONT[ch] ?? FONT['?'];
       for (let r = 0; r < 5; r++) {
-        for (let i = 0; i < g[r].length; i++) if (g[r][i] === '#') this.px(cx + i, y + r, c);
+        for (let i = 0; i < g[r].length; i++) if (g[r][i] === '#') this.rect(cx + i * scale, y + r * scale, scale, scale, c);
       }
-      cx += g[0].length + 1;
+      cx += (g[0].length + 1) * scale;
     }
   }
 
-  /** Text on a plate (dark plate, light text by default), centred on x. */
-  label(str, x, y, { dark = true } = {}) {
+  /** A framed plate: fill with a 1px border. */
+  plate(x, y, w, h, fill, border = C.outline) {
+    this.rect(x, y, w, h, border);
+    this.rect(x + 1, y + 1, w - 2, h - 2, fill);
+  }
+
+  /** Text on a plate centred on x (top of the text at y). */
+  label(str, x, y, { fill = C.outline, color = C.white, border = C.white } = {}) {
     const w = textWidth(str);
-    const x0 = Math.round(x - w / 2) - 2;
-    this.rect(x0, y - 2, w + 4, 9, dark ? DARK : LIGHT);
-    if (!dark) {
-      this.line(x0, y - 2, x0 + w + 3, y - 2, DARK);
-      this.line(x0, y + 6, x0 + w + 3, y + 6, DARK);
-      this.line(x0, y - 2, x0, y + 6, DARK);
-      this.line(x0 + w + 3, y - 2, x0 + w + 3, y + 6, DARK);
-    }
-    this.text(str, x0 + 2, y, dark ? LIGHT : DARK);
+    const x0 = Math.round(x - w / 2) - 4;
+    this.plate(x0, y - 4, w + 8, 18, fill, border);
+    this.text(str, x0 + 4, y, color);
   }
 
   blit(canvas, x, y) {
@@ -156,10 +154,10 @@ export class Raster {
   }
 }
 
-export function textWidth(str) {
+export function textWidth(str, scale = 2) {
   let w = 0;
   for (const ch of String(str).toUpperCase()) w += (FONT[ch] ?? FONT['?'])[0].length + 1;
-  return Math.max(0, w - 1);
+  return Math.max(0, w - 1) * scale;
 }
 
 // 3x5 glyphs ('#' = ink). A few are narrower.

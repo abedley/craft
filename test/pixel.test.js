@@ -43,7 +43,7 @@ test('every hex picks back to itself at its top-face centre, on the scenario map
       assert.deepEqual(v.pick(cx, cy), { x, y }, `${name}: ${x},${y}`);
       const [ox, oy] = v.origin(x, y);
       // Down its middle too, except the bottom tip, which a higher hex in front may cover.
-      for (let r = 0; r < H - 5; r += 2) assert.deepEqual(v.pick(ox + W / 2, oy + r), { x, y }, `${name}: ${x},${y} row ${r}`);
+      for (let r = 0; r < H - 8; r += 2) assert.deepEqual(v.pick(ox + W / 2, oy + r), { x, y }, `${name}: ${x},${y} row ${r}`);
     }
     const { w, h } = v.size;
     assert.equal(v.pick(0, 0), null);
@@ -61,11 +61,11 @@ test('a building lifts the hex: its roof picks the hex, units stand on it', () =
 
 test('heights are whole pixels; water sits low; off-board is grass height', () => {
   assert.ok(ELEVATION.water < ELEVATION.grass);
-  assert.equal(elevationOf('no-such-type'), 6);
+  assert.equal(elevationOf('no-such-type'), 9);
   const v = new PixelView(new Game({ width: 2, height: 2 }));
   assert.equal(v.groundHeight(-1, 5), ELEVATION.grass);
   for (const [x, y] of [[0, 0], [1, 1]]) assert.ok(v.center(x, y).every(Number.isInteger));
-  assert.equal(V, 11);
+  assert.equal(V, 21);
 });
 
 test('tapping two hexes out along each direction snaps to that direction', () => {
