@@ -25,6 +25,6 @@ const app = {
 // Exposed for poking at the game from the console (and for tests).
 window.craft = app;
 
-// Draw once the hand-lettered font is in (canvas text needs it loaded).
-const fontsReady = document.fonts?.load ? document.fonts.load('16px "Patrick Hand"').catch(() => {}) : Promise.resolve();
+// Start once the pixel fonts are in (so the first screen doesn't jump).
+const fontsReady = document.fonts?.load ? Promise.all([document.fonts.load('16px "Silkscreen"'), document.fonts.load('16px "Pixelify Sans"')]).catch(() => {}) : Promise.resolve();
 Promise.race([fontsReady, new Promise((r) => setTimeout(r, 1500))]).then(() => app.show('title'));

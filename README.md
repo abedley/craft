@@ -5,8 +5,8 @@ iPhone 13 Pro held vertically), hosted on GitHub Pages.
 
 No build step: plain ES modules served as static files.
 
-- **The game** is `index.html`: a single-player campaign, played on an isometric, 1-bit
-  hand-drawn board.
+- **The game** is `index.html`: a single-player campaign, played on an isometric, monochrome
+  pixel-art board.
 - **The debug UI** is `debug.html`: a flat board with editing tools, every scenario, and an
   event log.
 
@@ -24,7 +24,7 @@ To try it on a phone, serve on your LAN and open `http://<your-ip>:8000`.
 ```
 index.html            the game shell
 debug.html            debug UI shell
-css/game.css          the game's paper-and-ink styles
+css/game.css          the game's dark pixel-panel styles
 css/style.css         debug UI styles (safe areas, 44px touch targets)
 src/engine/           deterministic game engine (no DOM)
   game.js             Game state, order queue, tick(), projectiles
@@ -42,10 +42,12 @@ src/app/              the game UI
   main.js             boot + screen router (title -> campaign -> battle)
   campaign.js         level list + saved progress (localStorage)
   screens/            title / campaign screens, the battle screen
-  battleView.js       the isometric board renderer (cached terrain, depth-sorted things)
-  iso.js              isometric projection, camera (fit / zoom / pan), picking (no DOM)
-  ink.js              1-bit drawing kit: seeded wobbly lines, hatching, stipple
-  art/                terrain, unit figures, intents and effects
+  battleView.js       draws each frame into a small art buffer and scales it up crisply;
+                      camera (fit / zoom / pan) in whole device pixels
+  pixel/grid.js       integer hex geometry: tile masks, elevations, picking (no DOM)
+  pixel/raster.js     pixel primitives: dithers, lines, hex faces, 3x5 bitmap font
+  pixel/sprites.js    unit and prop sprites, written as text
+  pixel/draw.js       terrain, units, intents, markers and playback effects
   controls.js         tap / pan / pinch gestures
   shared.js           helpers used by both UIs (direction snapping, preview, paths)
 src/scenarios.js      preset boards: matches and rule demos
@@ -54,9 +56,12 @@ test/                 node:test suites (engine, campaign, iso view)
 
 ## The game
 
-Portrait only, built for an iPhone 13 Pro in Safari. Soft charcoal ink on paper, with terrain
-sketched in a lighter pencil tone so units and threats stand out; shading is hatching and stipple. Lines are drawn with a seeded wobble so they look inked by
-hand but stay still (they "boil" between three variants a few times a second).
+Portrait only, built for an iPhone 13 Pro in Safari. Monochrome pixel art: two tones (a warm
+light and a soft charcoal) plus dithering, on dark bevelled panels. The board is drawn at a low
+"art" resolution (about 180 x 170 pixels for the escort map) and scaled up by a whole number of
+device pixels, so every pixel is a crisp, equal square. Hexes are a fixed 20 x 16 pixel mask on a
+2:1 slope that tiles exactly; terrain height is a few pixels of elevation. Units idle with a
+1-pixel bob; your units are light with a ring base, the CPU's are dark on a solid base.
 
 - **Title → Campaign → Battle → Result.** The campaign is a list of levels; a level opens when the
   one before it is cleared. Progress is saved in `localStorage` (or kept for the session if
@@ -91,8 +96,8 @@ hand but stay still (they "boil" between three variants a few times a second).
 ```
 
 `scenario` names a board in `src/scenarios.js` (its units, terrain and objective). Levels play in
-file order. Fonts: Patrick Hand and Permanent Marker from Google Fonts, falling back to the
-system's Marker Felt.
+file order. Fonts: Silkscreen and Pixelify Sans from Google Fonts (monospace fallback); text on
+the board uses a built-in 3x5 bitmap font.
 
 
 ## Turns and teams

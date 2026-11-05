@@ -1,28 +1,26 @@
 // Title and campaign screens.
 
 import { LEVELS, CAMPAIGN } from '../campaign.js';
-import { IsoView } from '../iso.js';
-import { drawTile, drawTrees, drawPaperDecor, drawBuilding, drawObjectiveFlag } from '../art/terrain.js';
-import { drawFigure } from '../art/units.js';
-import { PAPER } from '../ink.js';
-import { h, esc, crispCanvas } from '../dom.js';
+import { PixelView } from '../pixel/grid.js';
+import { Raster, FRAME } from '../pixel/raster.js';
+import { drawTerrain, drawTrees, drawBuilding, drawGoal, drawUnit } from '../pixel/draw.js';
+import { h, esc } from '../dom.js';
 
-/** A small hand-drawn diorama for the title screen. */
+/** A small pixel diorama for the title screen, scaled up by whole device pixels. */
 function drawVignette(canvas, w, hgt) {
-  const ctx = crispCanvas(canvas, w, hgt);
-  ctx.fillStyle = PAPER;
-  ctx.fillRect(0, 0, w, hgt);
   const rows = ['.f=.', '~~=~', '.=.f'];
   const terrain = { '.': 'grass', '=': 'road', f: 'forest', '~': 'water' };
   const board = {
     width: 4, height: 3,
+    terrain: [],
     terrainAt: (x, y) => terrain[rows[y][x]],
     buildingAt: (x, y) => (x === 0 && y === 2 ? { id: 1, x, y, team: 'player' } : null),
   };
-  const v = new IsoView(board);
-  v.fit(w, hgt, 18);
-  drawPaperDecor(ctx, v, 3, 1.2);
-  for (const [x, y] of v.drawOrder()) drawTile(ctx, v, x, y, board.terrainAt(x, y), 7);
+  const v = new PixelView(board, { top: 24, side: 4, bottom: 4 });
+  const art = document.createElement('canvas');
+  ({ w: art.width, h: art.height } = v.size);
+  const r = new Raster(art.getContext('2d'));
+  drawTerrain(r, v);
   const units = [
     { at: [2, 0], u: { id: 91, type: 'gunslinger', team: 'cpu' } },
     { at: [3, 0], u: { id: 92, type: 'pikeman', team: 'cpu' } },
@@ -30,16 +28,25 @@ function drawVignette(canvas, w, hgt) {
     { at: [2, 2], u: { id: 94, type: 'pikeman', team: 'player' } },
   ];
   for (const [x, y] of v.drawOrder()) {
-    if (board.terrainAt(x, y) === 'forest') drawTrees(ctx, v, x, y, 2);
+    if (board.terrainAt(x, y) === 'forest') drawTrees(r, v, x, y);
     const b = board.buildingAt(x, y);
-    if (b) drawBuilding(ctx, v, b);
-    if (x === 0 && y === 0) drawObjectiveFlag(ctx, v, 0, 0);
+    if (b) drawBuilding(r, v, b);
+    if (x === 0 && y === 0) drawGoal(r, v, 0, 0);
     const it = units.find((k) => k.at[0] === x && k.at[1] === y);
-    if (it) {
-      const [fx, fy] = v.center(x, y, v.standHeight(x, y));
-      drawFigure(ctx, it.u, fx, fy, v.scale * 1.08);
-    }
+    if (it) drawUnit(r, it.u, ...v.center(x, y, v.standHeight(x, y)));
   }
+  // Scale up by a whole number of device pixels and centre it.
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(hgt * dpr);
+  canvas.style.width = `${w}px`;
+  canvas.style.height = `${hgt}px`;
+  const k = Math.max(1, Math.floor(Math.min(canvas.width / art.width, canvas.height / art.height)));
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = FRAME;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(art, Math.floor((canvas.width - art.width * k) / 2), Math.floor((canvas.height - art.height * k) / 2), art.width * k, art.height * k);
 }
 
 export function titleScreen(app) {

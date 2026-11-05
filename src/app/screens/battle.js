@@ -15,11 +15,12 @@ import { getLevel, startLevel } from '../campaign.js';
 import { BattleView } from '../battleView.js';
 import { attachGestures } from '../controls.js';
 import { nearestDirection, previewOf, moveReach, teleportReach } from '../shared.js';
-import { drawFigure } from '../art/units.js';
-import { PAPER, rng, poly } from '../ink.js';
+import { unitSprite } from '../pixel/sprites.js';
+import { FRAME } from '../pixel/raster.js';
+import { BUILDING_HEIGHT } from '../pixel/grid.js';
 import { h, esc, crispCanvas } from '../dom.js';
 
-const BOIL_MS = 220; // hand-drawn line "boil" frame time
+const BOB_MS = 500; // idle animation frame time (units bob, the selection blinks)
 const pad2 = (n) => String(n).padStart(2, '0');
 
 const GLYPH = { move: '→', quick: 'ϟ', attack: '✷', shoot: '➶', charge: '»', teleport: '⇢', build: '▣', shot: '•' };
@@ -122,10 +123,9 @@ export function battleScreen(app, { levelId }) {
 
   function renderBoard(seed) {
     const g = s.display ?? game();
-    if (view.view.game !== g) view.view.game = g;
     view.render({
       game: g,
-      seed,
+      frame: seed,
       selectedId: s.playing ? null : s.selectedId,
       reach: reach(),
       aim: aim(),
@@ -154,7 +154,7 @@ export function battleScreen(app, { levelId }) {
         }
       }
     }
-    const boil = Math.floor(now / BOIL_MS) % 3;
+    const boil = Math.floor(now / BOB_MS) % 2;
     if (boil !== s.boil) {
       s.boil = boil;
       s.dirty = true;
@@ -255,7 +255,8 @@ export function battleScreen(app, { levelId }) {
     const u = s.playing ? null : selected();
     const pc = $('[data-portrait]');
     const ctx = crispCanvas(pc, 52, 60);
-    ctx.fillStyle = PAPER;
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = FRAME;
     ctx.fillRect(0, 0, 52, 60);
     if (!u) {
       $('[data-card]').classList.add('empty');
@@ -268,9 +269,8 @@ export function battleScreen(app, { levelId }) {
     }
     $('[data-card]').classList.remove('empty');
     const def = getUnitType(u.type);
-    const r = rng(u.id);
-    poly(ctx, [[6, 50], [26, 44], [46, 50], [26, 57]], r, { fill: PAPER, width: 1.2 });
-    drawFigure(ctx, u, 26, 50, 36, { shape: def.shape, face: 1 });
+    // The unit's sprite at 2x (the canvas scales to device pixels), facing right.
+    ctx.drawImage(unitSprite(u.type, u.team), 26 - 15, 56 - 44, 30, 44);
     const vip = g.objective?.kind === 'escort' && g.objective.unitId === u.id;
     $('[data-name]').innerHTML = `${esc(def.name.toUpperCase())}${u.team === Teams.CPU ? ' <span class="tag dark">ENEMY</span>' : ''}${vip ? ' <span class="tag">★ ESCORT</span>' : ''}`;
     $('[data-stats]').textContent = statsOf(u);
@@ -359,7 +359,7 @@ export function battleScreen(app, { levelId }) {
           return;
         }
         const dirs = getUnitType(u.type).attack.directions;
-        const dir = nearestDirection((x, y) => view.view.center(x, y, view.view.standHeight(x, y)), u, hex.x, hex.y, dirs);
+        const dir = nearestDirection((x, y) => view.grid.center(x, y, view.grid.standHeight(x, y)), u, hex.x, hex.y, dirs);
         give(s.mode === 'charge' ? charge(dir) : attack(dir));
         return;
       } else if (s.mode === 'teleport') {
@@ -445,11 +445,12 @@ export function battleScreen(app, { levelId }) {
   }
 
   // Board point helpers for playback.
-  const plane = (x, y) => view.view.plane(x, y);
-  const standH = (g, x, y) => view.view.groundHeight(x, y) + (g.buildingAt(x, y) ? 0.85 : 0);
+  // Board points for playback, in art pixels (`lift` is in hex-heights above the ground).
+  const standH = (g, x, y) => view.grid.groundHeight(x, y) + (g.buildingAt(x, y) ? BUILDING_HEIGHT : 0);
+  const feet = (g, x, y) => view.grid.center(x, y, standH(g, x, y));
   const screenOf = (g, x, y, lift = 0.5) => {
-    const [sx, sy] = view.view.center(x, y, standH(g, x, y));
-    return [sx, sy - view.view.scale * lift];
+    const [ax, ay] = feet(g, x, y);
+    return [ax, ay - Math.round(lift * 17)];
   };
 
   /** Show an effect for `ms` without waiting for it. */
@@ -480,14 +481,11 @@ export function battleScreen(app, { levelId }) {
         for (let i = 1; i < e.path.length; i++) {
           const [ax, ay] = e.path[i - 1];
           const [bx, by] = e.path[i];
-          const [apx, apy] = plane(ax, ay);
-          const [bpx, bpy] = plane(bx, by);
-          const ha = standH(g, ax, ay);
-          const hb = standH(g, bx, by);
+          const [x0, y0] = feet(g, ax, ay);
+          const [x1, y1] = feet(g, bx, by);
           await tween(fast ? 95 : 190, (t) => {
-            s.anim.units.set(u.id, {
-              px: apx + (bpx - apx) * t, py: apy + (bpy - apy) * t, h: ha + (hb - ha) * t + (fast ? 0 : Math.sin(Math.PI * t) * 0.3),
-            });
+            const hop = fast ? 0 : Math.round(Math.sin(Math.PI * t) * 4);
+            s.anim.units.set(u.id, [Math.round(x0 + (x1 - x0) * t), Math.round(y0 + (y1 - y0) * t) - hop]);
           });
           [u.x, u.y] = [bx, by];
         }
@@ -510,17 +508,15 @@ export function battleScreen(app, { levelId }) {
       case 'projectileMoved': {
         const p = g.getProjectile(e.projectileId);
         if (!p) break;
-        const angle = view.dirAngle(0, 0, p.dir);
-        const b = { id: p.id, px: 0, py: 0, h: 0, angle };
+        const angle = view.dirAngle(p.dir);
+        const b = { id: p.id, ax: 0, ay: 0, angle };
         s.anim.bullets.push(b);
         for (let i = 1; i < e.path.length; i++) {
           const [ax, ay] = e.path[i - 1];
           const [bx, by] = e.path[i];
-          const [apx, apy] = plane(ax, ay);
-          const [bpx, bpy] = plane(bx, by);
-          const ha = view.view.groundHeight(ax, ay);
-          const hb = view.view.groundHeight(bx, by);
-          await tween(70, (t) => Object.assign(b, { px: apx + (bpx - apx) * t, py: apy + (bpy - apy) * t, h: ha + (hb - ha) * t }));
+          const [x0, y0] = view.grid.center(ax, ay);
+          const [x1, y1] = view.grid.center(bx, by);
+          await tween(70, (t) => Object.assign(b, { ax: Math.round(x0 + (x1 - x0) * t), ay: Math.round(y0 + (y1 - y0) * t) - 9 }));
           [p.x, p.y] = [bx, by];
         }
         s.anim.bullets.splice(s.anim.bullets.indexOf(b), 1);
@@ -713,11 +709,10 @@ export function battleScreen(app, { levelId }) {
 
   const detach = attachGestures($('canvas'), {
     onTap,
-    onPan: (dx, dy) => { view.view.panBy(dx, dy); s.dirty = true; },
-    onZoom: (f, cx, cy) => { view.view.zoomAt(f, cx, cy); s.dirty = true; },
+    onPan: (dx, dy) => { view.panBy(dx, dy); s.dirty = true; },
+    onZoom: (f, cx, cy) => { view.zoomAt(f, cx, cy); s.dirty = true; },
   });
-  view.onCacheReady = () => { s.dirty = true; };
-  $('[data-recenter]').onclick = () => { view.view.resetCamera(); s.dirty = true; };
+  $('[data-recenter]').onclick = () => { view.resetCamera(); s.dirty = true; };
   $('[data-menu]').onclick = showMenu;
   $('[data-end]').onclick = endTurn;
   $('[data-undo]').onclick = undo;
@@ -749,9 +744,9 @@ export function battleScreen(app, { levelId }) {
   return {
     el,
     mounted() {
-      view.resize();
       view.setGame(game());
-      view.view.fit(view.cssW, view.cssH);
+      view.resize();
+      view.fit();
       s.dirty = true;
       requestAnimationFrame(frame);
       stamp('TURN 01');
@@ -771,7 +766,7 @@ export function battleScreen(app, { levelId }) {
       select: (id) => select(game().getUnit(id)),
       action: onAction,
       tapHex(x, y) {
-        const [sx, sy] = view.view.center(x, y, view.view.standHeight(x, y));
+        const [sx, sy] = view.artToCss(...view.grid.center(x, y, view.grid.standHeight(x, y)));
         onTap(sx, sy);
       },
       endTurn,

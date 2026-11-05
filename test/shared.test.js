@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { movePath, rayCells, moveReach, teleportReach, nearestDirection, previewOf, fmtOrder } from '../src/app/shared.js';
 import { Game, Teams, move, attack, quickMove, charge, teleport, build, distance, step, ALL_DIRECTIONS } from '../src/engine/index.js';
-import { IsoView } from '../src/app/iso.js';
+import { PixelView } from '../src/app/pixel/grid.js';
 
 test('movePath follows the route a move will take', () => {
   const g = new Game({ width: 5, height: 5, terrain: ['.....', '.....', '..~..', '.....', '.....'], units: [{ x: 4, y: 2, speed: 4 }] });
@@ -39,8 +39,7 @@ test('moveReach and teleportReach list legal targets', () => {
 
 test('nearestDirection snaps a tap to a direction in the iso view too', () => {
   const g = new Game({ width: 7, height: 7, units: [{ x: 3, y: 3 }] });
-  const v = new IsoView(g);
-  v.fit(390, 400);
+  const v = new PixelView(g);
   const u = g.getUnit(1);
   const center = (x, y) => v.center(x, y);
   // Tapping two hexes out along each direction picks that direction.

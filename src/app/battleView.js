@@ -1,49 +1,62 @@
-// The battle board renderer: an isometric, 1-bit hand-drawn canvas.
+// The battle board renderer: monochrome pixel art.
 //
-// Layers, back to front:
-//   1. terrain (paper decor + every hex prism), pre-rendered to an offscreen
-//      canvas and only redrawn when the zoom or the terrain changes;
-//   2. ground marks: reach, selection, strike flashes;
-//   3. things with height, depth-sorted: trees, buildings, mines, the goal
-//      flag, units, projectiles;
-//   4. intents (what each queue entry will do), queue number badges, danger
-//      marks, aim arrows and playback effects.
+// Each frame is drawn into a small "art buffer" (one pixel per art pixel,
+// about 220 x 200 for the escort map) and then scaled up onto the screen
+// canvas by a whole number of device pixels, with smoothing off, so every
+// art pixel is a crisp, equal square. The terrain is cached in its own
+// art-sized buffer and only redrawn when the terrain changes.
+//
+// Layers, back to front: terrain; ground marks (danger tiles, reach,
+// selection, strike flashes); things in depth order (trees, buildings,
+// mines, the goal flag, units, shots); intents and their number badges;
+// unit marks; playback effects.
 
-import { PAPER } from './ink.js';
-import { IsoView, SQUASH } from './iso.js';
-import { drawTile, drawTrees, drawBuilding, drawMine, drawObjectiveFlag, drawPaperDecor, penOf } from './art/terrain.js';
-import { drawFigure, escortStar } from './art/units.js';
+import { PixelView } from './pixel/grid.js';
+import { Raster, FRAME, PAT } from './pixel/raster.js';
 import {
-  reachMarks, selectBrackets, drawIntent, dangerTiles, badge, dangerMark, bullet, strikeFlash, boom, label, aimArrows,
-} from './art/effects.js';
-import { getUnitType, DIRECTION_ANGLES } from '../engine/index.js';
+  drawTerrain, drawTrees, drawBuilding, drawMine, drawGoal, drawUnit, drawBullet, escortStar, dangerMark,
+  reachMarks, selectRing, dangerTiles, drawIntent, badge, aimArrows, boom, strikeFlash, dirAngle,
+} from './pixel/draw.js';
+import { getUnitType } from '../engine/index.js';
 
-const PAD = 2.2; // hex radii of paper decor around the board
-const MAX_CACHE_PX = 9e6; // stay well inside iOS canvas memory limits
+const MAX_ZOOM = 3; // times the fitted scale
 
 export class BattleView {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.view = null;
-    this.cache = null;
-    this.cacheTimer = null;
+    this.grid = null;
+    this.art = document.createElement('canvas');
+    this.artCtx = this.art.getContext('2d');
+    this.terrain = document.createElement('canvas');
+    this.terrainKey = null;
     this.cssW = 0;
     this.cssH = 0;
+    this.dpr = 1;
+    this.k = 1; // device px per art px
+    this.fitK = 1;
+    this.off = [0, 0]; // device px of the art buffer's top-left
+    this.fitOff = [0, 0];
+    this.zoomAcc = 1;
   }
 
-  /** Point the view at a game (the camera is kept if the board size is the same). */
+  /** Point the view at a game (the camera is kept if the board is the same size). */
   setGame(game) {
-    const same = this.view && this.view.game.width === game.width && this.view.game.height === game.height;
-    if (!this.view) this.view = new IsoView(game);
-    this.view.game = game;
+    const same = this.grid && this.grid.game.width === game.width && this.grid.game.height === game.height;
+    if (!this.grid) this.grid = new PixelView(game);
+    this.grid.game = game;
     if (!same) {
-      this.cache = null;
-      if (this.cssW) this.view.fit(this.cssW, this.cssH);
+      const { w, h } = this.grid.size;
+      this.art.width = w;
+      this.art.height = h;
+      this.terrain.width = w;
+      this.terrain.height = h;
+      this.terrainKey = null;
+      if (this.cssW) this.fit();
     }
   }
 
-  /** Match the canvas to its box (call on resize). */
+  /** Match the canvas to its box (call on resize). Returns whether it changed. */
   resize() {
     const box = this.canvas.parentElement.getBoundingClientRect();
     const w = Math.max(1, Math.round(box.width));
@@ -57,201 +70,204 @@ export class BattleView {
     this.canvas.height = Math.round(h * dpr);
     this.canvas.style.width = `${w}px`;
     this.canvas.style.height = `${h}px`;
-    if (this.view) this.view.fit(w, h);
-    this.cache = null;
+    if (this.grid) this.fit();
     return true;
   }
 
+  // ---- camera (device pixels) --------------------------------------------------
+
+  fit() {
+    const { w, h } = this.grid.size;
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    this.fitK = Math.max(1, Math.floor(Math.min(W / w, H / h)));
+    this.k = this.fitK;
+    this.zoomAcc = 1;
+    this.off = [Math.floor((W - w * this.k) / 2), Math.floor((H - h * this.k) / 2)];
+    this.fitOff = [...this.off];
+  }
+
+  resetCamera() {
+    this.k = this.fitK;
+    this.zoomAcc = 1;
+    this.off = [...this.fitOff];
+  }
+
   get cameraMoved() {
-    const v = this.view;
-    return !!v && (Math.abs(v.scale - v.fitScale) > 0.01
-      || Math.abs(v.origin[0] - v.fitOrigin[0]) > 1 || Math.abs(v.origin[1] - v.fitOrigin[1]) > 1);
+    return this.k !== this.fitK || this.off[0] !== this.fitOff[0] || this.off[1] !== this.fitOff[1];
   }
 
-  // ---- terrain cache ---------------------------------------------------------
-
-  terrainKey() {
-    const g = this.view.game;
-    return `${this.view.scale.toFixed(3)}|${this.dpr}|${g.width}x${g.height}|${g.terrain.join(',')}`;
+  /** Zoom by `factor` about css point (cx, cy), in whole art-pixel steps. */
+  zoomAt(factor, cx, cy) {
+    this.zoomAcc = Math.max(1, Math.min(MAX_ZOOM, this.zoomAcc * factor));
+    const next = Math.max(this.fitK, Math.round(this.fitK * this.zoomAcc));
+    if (next === this.k) return;
+    const px = cx * this.dpr;
+    const py = cy * this.dpr;
+    const ax = (px - this.off[0]) / this.k;
+    const ay = (py - this.off[1]) / this.k;
+    this.k = next;
+    this.off = [Math.round(px - ax * next), Math.round(py - ay * next)];
+    this.clamp();
   }
 
-  buildCache() {
-    const v = this.view;
-    const b = v.unitBounds();
-    const x0 = b.x0 - PAD;
-    const y0 = b.y0 - PAD;
-    const wCss = (b.x1 - b.x0 + PAD * 2) * v.scale;
-    const hCss = (b.y1 - b.y0 + PAD * 2) * v.scale;
-    const cdpr = Math.min(this.dpr, Math.sqrt(MAX_CACHE_PX / (wCss * hCss)));
-    const c = this.cache?.canvas ?? document.createElement('canvas');
-    c.width = Math.ceil(wCss * cdpr);
-    c.height = Math.ceil(hCss * cdpr);
-    const ctx = c.getContext('2d');
-    ctx.setTransform(cdpr, 0, 0, cdpr, 0, 0);
-    ctx.clearRect(0, 0, wCss, hCss);
-    const saved = v.origin;
-    v.origin = [-x0 * v.scale, -y0 * v.scale];
-    drawPaperDecor(ctx, v, 0, PAD - 0.4);
-    for (const [x, y] of v.drawOrder()) drawTile(ctx, v, x, y, v.game.terrainAt(x, y));
-    v.origin = saved;
-    this.cache = { canvas: c, key: this.terrainKey(), scale: v.scale, x0, y0, wCss, hCss };
+  panBy(dx, dy) {
+    this.off = [this.off[0] + Math.round(dx * this.dpr), this.off[1] + Math.round(dy * this.dpr)];
+    this.clamp();
   }
 
-  drawTerrain(ctx) {
-    const v = this.view;
-    if (!this.cache || (this.cache.key !== this.terrainKey() && this.cache.scale === v.scale)) this.buildCache();
-    const c = this.cache;
-    if (c.key !== this.terrainKey()) {
-      // Zooming: stretch the old cache now, redraw it sharp once things settle.
-      clearTimeout(this.cacheTimer);
-      this.cacheTimer = setTimeout(() => { this.buildCache(); this.onCacheReady?.(); }, 140);
-    }
-    const k = v.scale / c.scale;
-    ctx.drawImage(c.canvas, v.origin[0] + c.x0 * v.scale, v.origin[1] + c.y0 * v.scale, c.wCss * k, c.hCss * k);
+  /** Keep at least part of the board on screen. */
+  clamp() {
+    const { w, h } = this.grid.size;
+    const keep = 60 * this.dpr;
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    this.off = [
+      Math.min(W - keep, Math.max(keep - w * this.k, this.off[0])),
+      Math.min(H - keep, Math.max(keep - h * this.k, this.off[1])),
+    ];
   }
 
-  // ---- frame -------------------------------------------------------------------
+  /** Art px -> css px (for tests and taps). */
+  artToCss(ax, ay) {
+    return [(this.off[0] + (ax + 0.5) * this.k) / this.dpr, (this.off[1] + (ay + 0.5) * this.k) / this.dpr];
+  }
+
+  /** The hex under css point (sx, sy), or null. */
+  pick(sx, sy) {
+    const ax = Math.floor((sx * this.dpr - this.off[0]) / this.k);
+    const ay = Math.floor((sy * this.dpr - this.off[1]) / this.k);
+    return this.grid.pick(ax, ay);
+  }
+
+  dirAngle(dir) {
+    return dirAngle(dir);
+  }
+
+  // ---- frame ---------------------------------------------------------------------
+
+  drawTerrainCache() {
+    const g = this.grid.game;
+    const key = `${g.width}x${g.height}|${g.terrain.join(',')}`;
+    if (key === this.terrainKey) return;
+    const ctx = this.terrain.getContext('2d');
+    ctx.clearRect(0, 0, this.terrain.width, this.terrain.height);
+    drawTerrain(new Raster(ctx), this.grid);
+    this.terrainKey = key;
+  }
 
   /**
    * @param {object} st
-   *   game, seed (line boil 0..2), selectedId, reach {cells, teleport},
+   *   game, frame (0/1: idle bob and blink), selectedId, reach {cells, teleport},
    *   aim {unit, dirs}, intents (bool), activeStep, danger (Set of unit ids),
-   *   threats ([[x, y]] hexes hit this turn), focusId (unit whose intent is
-   *   emphasised; others fade), showNumbers (all queue badges; otherwise
-   *   only the focused unit's and the step being played),
-   *   anim { units: Map(id -> {px, py, h}), hidden: Set, bullets: [{px, py, h, angle}],
-   *          effects: [{kind, ...}], rising: Map(buildingId -> 0..1) }
+   *   threats ([[x, y]]), focusId, showNumbers,
+   *   anim { units: Map(id -> [ax, ay] feet), hidden: Set, bullets: [{id, ax, ay, angle}],
+   *          effects: [{kind, ...}] (art px), rising: Map(buildingId -> 0..1) }
    */
   render(st) {
-    const { ctx, view: v } = this;
+    const v = this.grid;
     const g = st.game;
-    const seed = st.seed ?? 0;
+    v.game = g;
     const anim = st.anim ?? {};
-    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    ctx.fillStyle = PAPER;
-    ctx.fillRect(0, 0, this.cssW, this.cssH);
-    this.drawTerrain(ctx);
+    const frame = st.frame ?? 0;
+    this.drawTerrainCache();
+    const a = this.artCtx;
+    a.fillStyle = FRAME;
+    a.fillRect(0, 0, this.art.width, this.art.height);
+    a.drawImage(this.terrain, 0, 0);
+    const r = new Raster(a);
 
     // Ground marks.
-    if (st.threats?.length) dangerTiles(ctx, v, st.threats, seed);
-    if (st.reach?.cells?.length) reachMarks(ctx, v, st.reach.cells, { teleport: st.reach.teleport, seed });
+    if (st.threats?.length) dangerTiles(r, v, st.threats);
+    if (st.reach?.cells?.length) reachMarks(r, v, st.reach.cells, st.reach.teleport);
     const sel = st.selectedId != null ? g.getUnit(st.selectedId) : null;
-    if (sel && !anim.units?.has(sel.id)) selectBrackets(ctx, v, sel.x, sel.y, seed);
-    for (const e of anim.effects ?? []) if (e.kind === 'strike') strikeFlash(ctx, v, e.cells, e.t, seed);
+    if (sel && !anim.units?.has(sel.id)) selectRing(r, v, sel.x, sel.y, frame);
+    for (const e of anim.effects ?? []) if (e.kind === 'strike') strikeFlash(r, v, e.cells, e.t);
 
-    this.drawThings(ctx, g, st, seed, anim);
+    this.drawThings(r, g, anim, frame);
 
-    // Intents and badges.
-    const k = penOf(v);
+    // Intents (unfocused ones dithered out) and their badges.
     const badges = [];
     if (st.intents) {
       g.queue.forEach((entry, i) => {
         if (st.activeStep && i + 1 < st.activeStep) return;
         const ownerId = entry.projectileId !== undefined ? g.getProjectile(entry.projectileId)?.ownerId : entry.unitId;
-        const focused = st.focusId == null || ownerId === st.focusId;
-        ctx.save();
-        if (!focused) ctx.globalAlpha = 0.28;
-        const at = drawIntent(ctx, v, g, entry, { seed });
-        ctx.restore();
+        r.fade = st.focusId != null && ownerId !== st.focusId ? PAT.quarter : null;
+        const at = drawIntent(r, v, g, entry);
+        r.fade = null;
         if (!at) return;
         const active = st.activeStep === i + 1;
         if (!(st.showNumbers || active || (st.focusId != null && ownerId === st.focusId))) return;
-        const team = entry.projectileId !== undefined ? (g.getUnit(ownerId)?.team ?? 'cpu') : g.getUnit(entry.unitId)?.team;
+        const team = g.getUnit(ownerId)?.team ?? 'cpu';
         const fast = !!(entry.order?.quick || entry.order?.type === 'charge');
         badges.push({ at, n: i + 1, dark: team === 'cpu', fast, active });
       });
     }
-    if (st.aim) aimArrows(ctx, v, st.aim.unit, st.aim.dirs, seed);
+    if (st.aim) aimArrows(r, v, st.aim.unit, st.aim.dirs);
 
-    // Unit marks: escort star, danger, channel progress.
+    // Unit marks: escort star, dies-this-turn, build progress.
     const vipId = g.objective?.kind === 'escort' ? g.objective.unitId : null;
     for (const u of g.units) {
       if (anim.hidden?.has(u.id)) continue;
       const [fx, fy] = this.footOf(u, anim);
-      if (u.id === vipId) escortStar(ctx, fx - v.scale * 0.04, fy - v.scale * 1.6, v.scale, seed);
-      if (st.danger?.has(u.id)) dangerMark(ctx, fx - v.scale * 0.42, fy - v.scale * 1.05, v.scale, seed);
-      if (u.channel?.kind === 'build') {
-        label(ctx, fx, fy + v.scale * 0.32, `${u.channel.progress}/${getUnitType(u.type).build.turns}`, 13 * Math.max(1, k), { dark: true });
-      }
+      if (u.id === vipId) escortStar(r, fx, fy);
+      if (st.danger?.has(u.id)) dangerMark(r, fx, fy);
+      if (u.channel?.kind === 'build') r.label(`${u.channel.progress}/${getUnitType(u.type).build.turns}`, fx, fy + 4);
     }
-    for (const b of badges) badge(ctx, b.at[0], b.at[1], b.n, { dark: b.dark, fast: b.fast, active: b.active, k });
+    for (const b of badges) badge(r, b.at[0], b.at[1], b.n, b);
 
     for (const e of anim.effects ?? []) {
-      if (e.kind === 'boom') boom(ctx, e.x, e.y, v.scale * (e.size ?? 1), e.t, e.seed ?? 0);
-      if (e.kind === 'text') label(ctx, e.x, e.y - e.t * v.scale * 0.5, e.text, 15 * Math.max(1, k), { dark: e.dark });
+      if (e.kind === 'boom') boom(r, e.x, e.y, e.size ?? 1, e.t);
+      if (e.kind === 'text') r.label(e.text, e.x, Math.round(e.y - e.t * 6), { dark: !e.light });
     }
+
+    // Scale the art buffer up onto the screen.
+    const ctx = this.ctx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = FRAME;
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.drawImage(this.art, this.off[0], this.off[1], this.art.width * this.k, this.art.height * this.k);
   }
 
-  /** Screen position of a unit's feet (animated if it's moving). */
+  /** Art position of a unit's feet (animated if it's moving). */
   footOf(u, anim = {}) {
-    const v = this.view;
-    const a = anim.units?.get(u.id);
-    if (a) return v.project(a.px, a.py, a.h);
-    return v.center(u.x, u.y, v.standHeight(u.x, u.y));
+    const p = anim.units?.get(u.id);
+    if (p) return p;
+    return this.grid.center(u.x, u.y, this.grid.standHeight(u.x, u.y));
   }
 
-  /** Trees, buildings, mines, the flag, units and projectiles, in depth order. */
-  drawThings(ctx, g, st, seed, anim) {
-    const v = this.view;
+  /** Trees, buildings, mines, the flag, units and shots, back to front. */
+  drawThings(r, g, anim, frame) {
+    const v = this.grid;
     const items = [];
-    const at = (x, y) => v.plane(x, y)[1];
-    for (let x = 0; x < g.width; x++) {
-      for (let y = 0; y < g.height; y++) {
-        if (g.terrainAt(x, y) === 'forest') items.push({ d: at(x, y) - 0.05, x, draw: () => drawTrees(ctx, v, x, y) });
-      }
+    const depth = (x, y) => v.center(x, y)[1];
+    for (const [x, y] of v.drawOrder()) {
+      if (g.terrainAt(x, y) === 'forest') items.push({ d: depth(x, y) - 0.5, draw: () => drawTrees(r, v, x, y) });
     }
     for (const b of g.buildings) {
-      const rise = anim.rising?.get(b.id) ?? 1;
-      items.push({ d: at(b.x, b.y) - 0.02, x: b.x, draw: () => drawBuilding(ctx, v, b, 0, rise) });
+      items.push({ d: depth(b.x, b.y) - 0.3, draw: () => drawBuilding(r, v, b, anim.rising?.get(b.id) ?? 1) });
     }
-    for (const m of g.mines) items.push({ d: at(m.x, m.y) - 0.03, x: m.x, draw: () => drawMine(ctx, v, m, seed) });
-    const obj = g.objective;
-    if (obj?.kind === 'escort') {
-      items.push({ d: at(...obj.to) - 0.04, x: obj.to[0], draw: () => drawObjectiveFlag(ctx, v, obj.to[0], obj.to[1], seed) });
+    for (const m of g.mines) items.push({ d: depth(m.x, m.y) - 0.4, draw: () => drawMine(r, v, m) });
+    if (g.objective?.kind === 'escort') {
+      const [gx, gy] = g.objective.to;
+      items.push({ d: depth(gx, gy) - 0.45, draw: () => drawGoal(r, v, gx, gy) });
     }
     for (const u of g.units) {
       if (anim.hidden?.has(u.id)) continue;
-      const a = anim.units?.get(u.id);
-      const d = a ? a.py : at(u.x, u.y);
-      items.push({
-        d: d + 0.01, x: u.x,
-        draw: () => {
-          const [fx, fy] = this.footOf(u, anim);
-          drawFigure(ctx, u, fx, fy, v.scale * 1.08, { seed, shape: getUnitType(u.type).shape });
-        },
-      });
+      const moving = anim.units?.has(u.id);
+      const [fx, fy] = this.footOf(u, anim);
+      const ground = moving ? fy : depth(u.x, u.y);
+      items.push({ d: ground, draw: () => drawUnit(r, u, fx, fy, moving ? 0 : (frame + u.id) % 2) });
     }
     const flying = new Set((anim.bullets ?? []).map((b) => b.id));
     for (const p of g.projectiles) {
       if (flying.has(p.id)) continue;
-      items.push({
-        d: at(p.x, p.y) + 0.03, x: p.x,
-        draw: () => {
-          const [sx, sy] = v.center(p.x, p.y, v.groundHeight(p.x, p.y));
-          bullet(ctx, sx, sy - v.scale * 0.55, this.dirAngle(p.x, p.y, p.dir), v.scale, p.id + seed);
-        },
-      });
+      const [bx, by] = v.center(p.x, p.y);
+      items.push({ d: by + 0.2, draw: () => drawBullet(r, bx, by - 9, dirAngle(p.dir)) });
     }
-    for (const b of anim.bullets ?? []) {
-      items.push({
-        d: b.py + 0.03, x: 0,
-        draw: () => {
-          const [sx, sy] = v.project(b.px, b.py, b.h);
-          bullet(ctx, sx, sy - v.scale * 0.55, b.angle, v.scale, b.id + seed);
-        },
-      });
-    }
-    items.sort((a, b) => a.d - b.d || a.x - b.x);
+    for (const b of anim.bullets ?? []) items.push({ d: b.ay + 9.2, draw: () => drawBullet(r, b.ax, b.ay, b.angle) });
+    items.sort((a, b) => a.d - b.d);
     for (const it of items) it.draw();
-  }
-
-  /** On-screen angle of a hex direction (the iso squash bends it). */
-  dirAngle(x, y, dir) {
-    const a = DIRECTION_ANGLES[dir];
-    return Math.atan2(Math.sin(a) * SQUASH, Math.cos(a));
-  }
-
-  pick(sx, sy) {
-    return this.view.pick(sx, sy);
   }
 }
