@@ -49,10 +49,29 @@ export const C = {
   boardDither: '#e8f3f8',
 };
 
+// Units: a muted, earthy set. Each ramp runs light -> dark and ends in its
+// "edge" shade, which outlines that material instead of a black line.
+export const U = {
+  skin: ['#ecc9a2', '#c99a76', '#8a5e4a'],
+  metal: ['#e1e0d8', '#aeb0ab', '#7c7f84', '#4d4b57'],
+  glass: ['#b4d0d6', '#57768a', '#33435a'],
+  wood: ['#a98257', '#7e5d3f', '#4f3a2a'],
+  leather: ['#8f6a4a', '#674b36', '#3f2e24'],
+  cloth: ['#615664', '#3b3242'],
+  hood: ['#2a2230'],
+  glow: ['#f5dc7a', '#c79f3c'],
+  spark: ['#fff6d8', '#c79f3c'],
+};
+
 /** Team colours: main, light, dark, plus marker colours for its orders. */
 export const TEAM = {
-  player: { main: '#3f7fe6', light: '#86b6ff', dark: '#24508f', order: '#2f6fe0', move: '#2f6fe0', plate: '#3f7fe6' },
-  cpu: { main: '#dc4b3c', light: '#ff8f72', dark: '#8f2b23', order: '#e23b2e', move: '#c9786e', plate: '#dc4b3c' },
+  player: { main: '#3f7fe6', light: '#86b6ff', dark: '#24508f', order: '#2f6fe0', move: '#2f6fe0', plate: '#3f7fe6',
+    unit: ['#93b2da', '#5f83bb', '#41608f', '#2c3f63'] },
+  cpu: { main: '#dc4b3c', light: '#ff8f72', dark: '#8f2b23', order: '#e23b2e', move: '#c9786e', plate: '#dc4b3c',
+    unit: ['#e5a08a', '#c3654f', '#8e4437', '#5c2c26'] },
 };
+
+/** Every unit ramp (all but the team ones), for edge lookups and tests. */
+export const UNIT_RAMPS = Object.values(U);
 
 export const teamOf = (team) => TEAM[team] ?? TEAM.cpu;

@@ -7,13 +7,14 @@
 // node; `toCanvas` turns one into a cached canvas for drawing.
 //
 // Unit sprites are UNIT_W x UNIT_H, face right, and stand with their feet
-// on FOOT_ROW (the outline's bottom row). CPU sprites are mirrored.
+// on FOOT_ROW (the outline's bottom row). CPU sprites are mirrored. Units
+// have a soft, coloured outline; props keep the plum OUTLINE.
 
-import { C, OUTLINE, teamOf } from './palette.js';
+import { C, U, UNIT_RAMPS, OUTLINE, teamOf } from './palette.js';
 
-export const UNIT_W = 26;
-export const UNIT_H = 40;
-export const FOOT_ROW = 37;
+export const UNIT_W = 18;
+export const UNIT_H = 24;
+export const FOOT_ROW = 21;
 
 export class SpriteBuilder {
   constructor(w, h) {
@@ -108,143 +109,119 @@ export class SpriteBuilder {
 }
 
 // ---- units ------------------------------------------------------------------------
+// Small chibi figures: a big head on a stubby body, a handful of muted
+// colours each, and a soft outline: every edge is the darkest shade of the
+// material it wraps (see U in palette.js), never a black line.
 
-function legs(s, t) {
-  s.rect(9, 29, 3, 6, C.cloth[0]).rect(13, 29, 3, 6, C.cloth[1]);
-  s.rect(8, 34, 4, 3, C.leather[1]).rect(13, 34, 4, 3, C.leather[1]);
-  s.px(9, 34, C.leather[0]).px(14, 34, C.leather[0]);
-  void t;
+/** Map each unit colour (and the team's) to its ramp's edge shade. */
+function edgeMap(t) {
+  const m = new Map();
+  for (const ramp of [...UNIT_RAMPS, t.unit]) for (const c of ramp) m.set(c, ramp[ramp.length - 1]);
+  return m;
 }
 
-function head(s, cx = 12.5, cy = 13) {
-  s.ellipse(cx, cy, 3.6, 3.6, C.skin[0]);
-  s.rect(Math.round(cx + 1), cy - 1, 2, 4, C.skin[1]); // shaded side
-  s.px(Math.round(cx + 1.5), cy, OUTLINE); // eye
+/** Soft outline: each empty pixel next to the figure takes the edge shade of what it touches. */
+function softOutline(s, edges) {
+  const add = [];
+  for (let y = 0; y < s.h; y++) {
+    for (let x = 0; x < s.w; x++) {
+      if (s.get(x, y)) continue;
+      const n = [[0, -1], [-1, 0], [1, 0], [0, 1]].map(([dx, dy]) => s.get(x + dx, y + dy)).find(Boolean);
+      if (n) add.push([x, y, edges.get(n) ?? n]);
+    }
+  }
+  for (const [x, y, c] of add) s.px(x, y, c);
+  return s;
 }
 
-function torso(s, t, { x = 8, w = 9 } = {}) {
-  s.rect(x, 17, w, 12, t.main);
-  s.rect(x, 17, 1, 11, t.light);
-  s.rect(x + w - 2, 17, 2, 12, t.dark);
-  s.rect(x, 26, w, 2, C.leather[1]);
-  s.px(x + Math.floor(w / 2), 26, C.metal[1]);
+function chibiHead(s, cx = 8.5, cy = 7.5) {
+  const x = Math.floor(cx), y = Math.floor(cy);
+  s.ellipse(cx, cy, 4.6, 4.4, U.skin[0]);
+  s.rect(x - 3, y + 3, 7, 1, U.skin[1]).rect(x + 3, y + 1, 1, 3, U.skin[1]); // jaw in shade
+  s.rect(x, y - 1, 1, 2, U.cloth[1]).rect(x + 2, y - 1, 1, 2, U.cloth[1]); // eyes
+}
+
+function chibiBody(s, T, { boots = U.leather, legs = U.cloth } = {}) {
+  s.rect(6, 17, 2, 3, legs[0]).rect(10, 17, 2, 3, legs[1] ?? legs[0]);
+  s.rect(6, 19, 3, 2, boots[1]).rect(10, 19, 3, 2, boots[1]);
+  s.rect(5, 12, 8, 6, T[1]);
+  s.rect(5, 12, 1, 5, T[0]);
+  s.rect(11, 12, 2, 6, T[2]);
 }
 
 const UNIT_RECIPES = {
-  pikeman(s, t) {
-    // Pike (behind the front hand): shaft and a metal head.
-    s.line(20, 36, 21, 6, C.wood[1]);
-    s.line(21, 36, 22, 6, C.wood[2]);
-    s.poly([[21.5, 0.5], [24, 6], [19.5, 6]], C.metal[1]);
-    s.line(21, 1, 21, 5, C.metal[0]);
-    legs(s, t);
-    s.rect(6, 18, 2, 8, t.dark); // back arm
-    s.rect(6, 25, 2, 2, C.skin[1]);
-    torso(s, t);
-    s.rect(15, 19, 4, 3, t.main); // front arm to the pike
-    s.rect(19, 19, 3, 3, C.skin[0]);
-    head(s);
+  pikeman(s, T) {
+    s.line(15, 3, 15, 20, U.wood[1]);
+    s.poly([[15.5, 0], [17.5, 4], [13.5, 4]], U.metal[1]);
+    s.px(15, 1, U.metal[0]);
+    chibiBody(s, T);
+    s.rect(5, 16, 8, 1, U.leather[1]); // belt
+    s.rect(12, 13, 2, 2, T[1]); // arm to the pike
+    s.rect(14, 13, 2, 2, U.skin[0]);
+    chibiHead(s);
     // Kettle helmet with a wide brim.
-    s.ellipse(12.5, 10.5, 4.6, 3.6, C.metal[1], 'top');
-    s.rect(6, 10, 13, 2, C.metal[2]);
-    s.px(10, 8, C.metal[0]).px(11, 8, C.metal[0]).px(10, 9, C.metal[0]);
+    s.ellipse(8.5, 5.5, 5, 3.6, U.metal[1], 'top');
+    s.rect(3, 5, 12, 1, U.metal[2]);
+    s.px(6, 3, U.metal[0]).px(7, 2, U.metal[0]);
   },
 
-  gunslinger(s, t) {
-    legs(s, t);
-    // Duster coat flaring out, open at the front.
-    s.poly([[7, 17], [17.5, 17], [19.5, 34], [5, 34]], t.main);
-    s.poly([[15, 17], [17.5, 17], [19.5, 34], [16.5, 34]], t.dark);
-    s.line(7, 18, 6, 33, t.light);
-    s.rect(10, 17, 4, 8, C.wall[1]); // shirt
-    s.line(12, 27, 12, 33, t.dark);
-    s.rect(8, 25, 9, 2, C.leather[1]);
-    s.px(12, 25, C.metal[0]);
-    s.rect(5, 18, 2, 8, t.dark); // back arm
-    // Gun arm, out straight, and the pistol.
-    s.rect(16, 19, 6, 3, t.main);
-    s.rect(16, 21, 6, 1, t.dark);
-    s.rect(22, 19, 2, 3, C.skin[0]);
-    s.rect(23, 17, 3, 2, C.metal[1]);
-    s.px(25, 17, C.metal[2]).px(23, 19, C.metal[2]);
-    head(s);
-    s.rect(9, 15, 7, 2, t.dark); // bandana
+  gunslinger(s, T) {
+    chibiBody(s, T);
+    // Duster flaring out over the legs.
+    s.poly([[5, 12], [13, 12], [14, 19], [4, 19]], T[1]);
+    s.poly([[11, 12], [13, 12], [14, 19], [12, 19]], T[2]);
+    s.line(5, 13, 4, 18, T[0]);
+    s.rect(8, 12, 2, 5, U.metal[0]); // shirt
+    s.rect(12, 13, 3, 2, T[1]); // gun arm
+    s.px(15, 14, U.skin[0]);
+    s.rect(15, 12, 2, 2, U.metal[2]).px(16, 12, U.metal[1]);
+    chibiHead(s);
     // Wide-brim hat with a team band.
-    s.rect(4, 9, 17, 2, C.leather[0]);
-    s.rect(4, 10, 17, 1, C.leather[1]);
-    s.rect(8, 4, 9, 5, C.leather[0]);
-    s.rect(14, 4, 3, 5, C.leather[1]);
-    s.rect(8, 7, 9, 1, t.main);
-    s.px(9, 5, C.wood[0]);
+    s.rect(2, 4, 14, 1, U.leather[1]);
+    s.rect(5, 1, 8, 3, U.leather[0]);
+    s.rect(10, 1, 3, 3, U.leather[1]);
+    s.rect(5, 3, 8, 1, T[1]);
   },
 
-  stalker(s, t) {
+  stalker(s, T) {
     // Crouched under a long hooded cloak.
-    s.poly([[9, 16], [17, 16], [22, 37], [3, 37]], t.dark);
-    s.poly([[9, 16], [12, 16], [7, 37], [3, 37]], t.main);
-    s.line(11, 22, 10, 36, t.dark);
-    s.line(15, 21, 16, 36, OUTLINE);
-    s.line(18, 25, 19, 36, t.main);
-    s.rect(19, 31, 3, 2, C.skin[1]); // a hand on the ground
-    // Hood with a dark opening and glowing eyes.
-    s.ellipse(13, 15, 6.2, 6, t.dark);
-    s.ellipse(12, 14, 5, 5, t.main, 'top');
-    s.ellipse(15, 16, 3.6, 3.2, '#1b1420');
-    s.px(14, 16, C.eyes).px(17, 16, C.eyes);
+    s.poly([[4, 10], [13, 10], [16, 21], [1, 21]], T[2]);
+    s.poly([[4, 10], [8, 10], [5, 21], [1, 21]], T[1]);
+    s.line(9, 14, 9, 20, T[3]);
+    s.rect(14, 17, 2, 2, U.skin[1]); // a hand on the ground
+    s.ellipse(8.5, 9, 5.6, 5.4, T[2]);
+    s.ellipse(7.5, 7.5, 4.2, 3.8, T[1], 'top');
+    s.ellipse(10.5, 10, 3.4, 3, U.hood[0]);
+    s.px(9, 9, U.glow[0]).px(12, 9, U.glow[0]);
   },
 
-  builder(s, t) {
-    // A bulky armoured work suit: enclosed helmet with a glass visor, big
-    // shoulder pads, a powerpack on the back and a welding-torch arm.
-    // Back of the powerpack, with exhaust stacks.
-    s.rect(3, 15, 5, 12, C.metal[2]);
-    s.rect(3, 15, 1, 12, C.metal[1]);
-    s.rect(4, 11, 2, 4, C.metal[2]).px(4, 11, C.metal[1]);
-    s.rect(4, 18, 3, 1, OUTLINE).rect(4, 21, 3, 1, OUTLINE);
-    // Thick armoured legs and boots.
-    s.rect(8, 28, 4, 7, C.metal[2]);
-    s.rect(13, 28, 5, 7, C.metal[1]);
-    s.rect(13, 28, 1, 7, C.metal[0]);
-    s.rect(13, 30, 5, 2, t.main).rect(13, 30, 5, 1, t.light); // knee plate
-    s.rect(7, 34, 5, 3, OUTLINE).rect(13, 34, 7, 3, C.metal[2]);
-    s.rect(13, 34, 7, 1, C.metal[1]);
-    // Chest plate.
-    s.rect(7, 17, 12, 12, t.main);
-    s.rect(7, 17, 2, 11, t.light);
-    s.rect(16, 17, 3, 12, t.dark);
-    s.rect(7, 26, 12, 2, C.metal[2]);
-    s.rect(10, 21, 4, 3, C.metal[1]).px(10, 21, C.metal[0]); // chest vent
-    s.px(11, 22, OUTLINE).px(12, 22, OUTLINE);
-    // Back shoulder pad.
-    s.ellipse(7.5, 18, 3.4, 3.2, t.dark);
-    // Helmet with a wide glass visor.
-    s.ellipse(12.5, 12, 5.2, 5.2, C.metal[1]);
-    s.ellipse(11.5, 10.5, 3.4, 3, C.metal[0], 'top');
-    s.rect(9, 15, 8, 2, C.metal[2]);
-    s.rect(12, 9, 6, 5, C.window[1]).px(17, 9, C.metal[1]).px(17, 13, C.metal[1]);
-    s.rect(12, 9, 5, 1, C.window[0]).px(13, 10, C.window[0]).px(16, 12, C.water[2]);
-    s.rect(9, 15, 8, 1, t.dark); // collar trim
-    // Front arm: big shoulder pad, mechanical forearm, welding torch.
-    s.rect(17, 21, 4, 4, C.metal[2]);
-    s.rect(17, 21, 4, 1, C.metal[1]);
-    s.rect(21, 20, 3, 5, C.metal[1]);
-    s.rect(21, 20, 3, 1, C.metal[0]);
-    s.rect(24, 22, 1, 1, C.metal[2]);
-    s.ellipse(17.5, 18.5, 3.8, 3.4, t.main);
-    s.ellipse(16.8, 17.6, 2.2, 1.6, t.light, 'top');
-    // Torch flame and sparks.
-    s.px(25, 22, C.white).px(25, 21, C.window[0]).px(25, 23, C.window[0]);
-    s.px(24, 19, C.eyes).px(25, 25, C.eyes).px(23, 26, C.eyes);
+  builder(s, T) {
+    // Armoured work suit: powerpack, glass-visor helmet, big shoulder pad, torch.
+    s.rect(2, 11, 3, 6, U.metal[2]);
+    s.rect(2, 11, 1, 6, U.metal[1]);
+    s.rect(3, 8, 1, 3, U.metal[2]);
+    chibiBody(s, T, { boots: U.metal, legs: [U.metal[1], U.metal[2]] });
+    s.rect(5, 16, 8, 1, U.metal[2]);
+    s.rect(7, 14, 3, 2, U.metal[1]).px(7, 14, U.metal[0]); // chest vent
+    // Helmet with a wide visor.
+    s.ellipse(8.5, 7.5, 4.6, 4.4, U.metal[1]);
+    s.ellipse(7, 5, 2.4, 1.8, U.metal[0], 'top');
+    s.rect(4, 8, 4, 1, T[1]); // team stripe
+    s.rect(9, 6, 4, 3, U.glass[1]);
+    s.rect(9, 6, 3, 1, U.glass[0]);
+    s.rect(9, 9, 4, 1, U.metal[2]);
+    // Shoulder pad and torch arm.
+    s.rect(13, 14, 3, 2, U.metal[2]);
+    s.ellipse(12.5, 13, 2.8, 2.4, T[1]);
+    s.ellipse(12, 12.4, 1.6, 1, T[0], 'top');
+    s.px(16, 14, U.spark[0]).px(17, 13, U.glow[0]).px(17, 16, U.glow[0]);
   },
 
-  generic(s, t) {
-    legs(s, t);
-    s.rect(6, 18, 2, 8, t.dark);
-    torso(s, t);
-    s.rect(17, 18, 2, 8, t.dark);
-    s.rect(11, 19, 3, 3, t.light); // badge
-    head(s);
-    s.ellipse(12.5, 10.5, 4.2, 3.2, t.dark, 'top');
+  generic(s, T) {
+    chibiBody(s, T);
+    s.rect(5, 16, 8, 1, U.leather[1]);
+    chibiHead(s);
+    s.ellipse(8.5, 5.5, 4.6, 3.2, T[2], 'top');
   },
 };
 
@@ -252,9 +229,10 @@ export const UNIT_TYPES_DRAWN = Object.keys(UNIT_RECIPES).filter((k) => k !== 'g
 
 /** Build a unit sprite (facing right) for a team. */
 export function buildUnit(type, team) {
+  const t = teamOf(team);
   const s = new SpriteBuilder(UNIT_W, UNIT_H);
-  (UNIT_RECIPES[type] ?? UNIT_RECIPES.generic)(s, teamOf(team));
-  return s.outline();
+  (UNIT_RECIPES[type] ?? UNIT_RECIPES.generic)(s, t.unit);
+  return softOutline(s, edgeMap(t));
 }
 
 // ---- props --------------------------------------------------------------------------

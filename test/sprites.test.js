@@ -5,14 +5,18 @@ import {
   SpriteBuilder, buildUnit, buildTree, buildMine, buildGoalFlag, buildStar, buildDies, buildBullet,
   UNIT_W, UNIT_H, FOOT_ROW, UNIT_TYPES_DRAWN,
 } from '../src/app/pixel/sprites.js';
-import { C, TEAM, OUTLINE } from '../src/app/pixel/palette.js';
+import { C, TEAM, OUTLINE, UNIT_RAMPS } from '../src/app/pixel/palette.js';
 import { UnitTypes } from '../src/engine/index.js';
 
 const PALETTE = new Set([
   ...Object.values(C).flatMap((v) => (Array.isArray(v) ? v : [v])),
-  ...Object.values(TEAM).flatMap((t) => Object.values(t)),
+  ...Object.values(TEAM).flatMap((t) => Object.values(t).flat()),
+  ...UNIT_RAMPS.flat(),
   '#1b1420', '#ff6b5c', // hood shadow, dies-plate highlight
 ]);
+
+// Outline colours: the plum line, plus each unit ramp's edge shade (soft outline).
+const EDGES = new Set([OUTLINE, ...[...UNIT_RAMPS, ...Object.values(TEAM).map((t) => t.unit)].map((r) => r[r.length - 1])]);
 
 const sprites = () => [
   ...['player', 'cpu'].flatMap((team) => [...UNIT_TYPES_DRAWN, 'generic'].map((type) => [`${type}/${team}`, buildUnit(type, team)])),
@@ -27,7 +31,7 @@ test('every sprite uses palette colours only, and is fully outlined', () => {
     for (let y = 0; y < s.h; y++) {
       for (let x = 0; x < s.w; x++) {
         const c = s.get(x, y);
-        if (!c || c === OUTLINE) continue;
+        if (!c || EDGES.has(c)) continue;
         for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
           const inside = x + dx >= 0 && y + dy >= 0 && x + dx < s.w && y + dy < s.h;
           if (inside) assert.ok(s.get(x + dx, y + dy) !== null, `${name}: pixel ${x},${y} not outlined`);
@@ -45,8 +49,8 @@ test('unit sprites share one size, stand on the foot row, and differ by team', (
     const row = (y) => Array.from({ length: s.w }, (_, x) => s.get(x, y));
     assert.ok(row(FOOT_ROW).some(Boolean), `${type}: feet on row ${FOOT_ROW}`);
     for (let y = FOOT_ROW + 1; y < s.h; y++) assert.ok(!row(y).some(Boolean), `${type}: nothing below the feet`);
-    assert.ok(s.colors().has(TEAM.player.main) || s.colors().has(TEAM.player.dark), `${type}: wears team colours`);
-    assert.ok(buildUnit(type, 'cpu').colors().has(TEAM.cpu.dark), `${type}: CPU colours`);
+    assert.ok(s.colors().has(TEAM.player.unit[1]) || s.colors().has(TEAM.player.unit[2]), `${type}: wears team colours`);
+    assert.ok(buildUnit(type, 'cpu').colors().has(TEAM.cpu.unit[2]), `${type}: CPU colours`);
   }
   for (const key of Object.keys(UnitTypes)) assert.ok(UNIT_TYPES_DRAWN.includes(key), `sprite for ${key}`);
 });
