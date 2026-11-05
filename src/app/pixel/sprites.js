@@ -194,29 +194,47 @@ const UNIT_RECIPES = {
   },
 
   builder(s, t) {
-    // Wooden crate beside them.
-    s.rect(0, 27, 8, 10, C.wood[1]);
-    s.rect(0, 27, 8, 1, C.wood[0]);
-    s.rect(6, 27, 2, 10, C.wood[2]);
-    s.line(0, 28, 7, 36, C.wood[2]);
-    s.px(1, 29, C.metal[1]).px(5, 34, C.metal[1]);
-    legs(s, t);
-    s.rect(7, 18, 2, 8, t.light); // back arm (shirt sleeve)
-    torso(s, t, { x: 9, w: 8 });
-    s.rect(9, 17, 8, 3, t.light); // shirt above the bib
-    s.rect(10, 17, 1, 8, t.dark).rect(15, 17, 1, 8, t.dark); // straps
-    // Raised hammer arm.
-    s.rect(16, 12, 3, 7, t.light);
-    s.rect(16, 10, 3, 2, C.skin[0]);
-    s.line(18, 11, 20, 2, C.wood[1]);
-    s.rect(17, 0, 7, 3, C.metal[1]);
-    s.rect(17, 2, 7, 1, C.metal[2]);
-    s.px(18, 0, C.metal[0]);
-    head(s, 12.5, 13);
-    // Hard hat.
-    s.ellipse(12.5, 10.5, 4.6, 3.8, C.hardhat[1], 'top');
-    s.rect(7, 10, 12, 2, C.hardhat[2]);
-    s.px(10, 8, C.hardhat[0]).px(11, 7, C.hardhat[0]);
+    // A bulky armoured work suit: enclosed helmet with a glass visor, big
+    // shoulder pads, a powerpack on the back and a welding-torch arm.
+    // Back of the powerpack, with exhaust stacks.
+    s.rect(3, 15, 5, 12, C.metal[2]);
+    s.rect(3, 15, 1, 12, C.metal[1]);
+    s.rect(4, 11, 2, 4, C.metal[2]).px(4, 11, C.metal[1]);
+    s.rect(4, 18, 3, 1, OUTLINE).rect(4, 21, 3, 1, OUTLINE);
+    // Thick armoured legs and boots.
+    s.rect(8, 28, 4, 7, C.metal[2]);
+    s.rect(13, 28, 5, 7, C.metal[1]);
+    s.rect(13, 28, 1, 7, C.metal[0]);
+    s.rect(13, 30, 5, 2, t.main).rect(13, 30, 5, 1, t.light); // knee plate
+    s.rect(7, 34, 5, 3, OUTLINE).rect(13, 34, 7, 3, C.metal[2]);
+    s.rect(13, 34, 7, 1, C.metal[1]);
+    // Chest plate.
+    s.rect(7, 17, 12, 12, t.main);
+    s.rect(7, 17, 2, 11, t.light);
+    s.rect(16, 17, 3, 12, t.dark);
+    s.rect(7, 26, 12, 2, C.metal[2]);
+    s.rect(10, 21, 4, 3, C.metal[1]).px(10, 21, C.metal[0]); // chest vent
+    s.px(11, 22, OUTLINE).px(12, 22, OUTLINE);
+    // Back shoulder pad.
+    s.ellipse(7.5, 18, 3.4, 3.2, t.dark);
+    // Helmet with a wide glass visor.
+    s.ellipse(12.5, 12, 5.2, 5.2, C.metal[1]);
+    s.ellipse(11.5, 10.5, 3.4, 3, C.metal[0], 'top');
+    s.rect(9, 15, 8, 2, C.metal[2]);
+    s.rect(12, 9, 6, 5, C.window[1]).px(17, 9, C.metal[1]).px(17, 13, C.metal[1]);
+    s.rect(12, 9, 5, 1, C.window[0]).px(13, 10, C.window[0]).px(16, 12, C.water[2]);
+    s.rect(9, 15, 8, 1, t.dark); // collar trim
+    // Front arm: big shoulder pad, mechanical forearm, welding torch.
+    s.rect(17, 21, 4, 4, C.metal[2]);
+    s.rect(17, 21, 4, 1, C.metal[1]);
+    s.rect(21, 20, 3, 5, C.metal[1]);
+    s.rect(21, 20, 3, 1, C.metal[0]);
+    s.rect(24, 22, 1, 1, C.metal[2]);
+    s.ellipse(17.5, 18.5, 3.8, 3.4, t.main);
+    s.ellipse(16.8, 17.6, 2.2, 1.6, t.light, 'top');
+    // Torch flame and sparks.
+    s.px(25, 22, C.white).px(25, 21, C.window[0]).px(25, 23, C.window[0]);
+    s.px(24, 19, C.eyes).px(25, 25, C.eyes).px(23, 26, C.eyes);
   },
 
   generic(s, t) {
