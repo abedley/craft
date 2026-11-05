@@ -166,3 +166,15 @@ test('saves from the old turn rules are rejected with a clear error', () => {
   const old = { grid: 'hex', width: 3, height: 3, tick: 0, nextUnitId: 1, units: [], queue: [], projectiles: [] };
   assert.throws(() => Game.fromSnapshot(old), /older version of the turn rules/);
 });
+
+test('cancelOrder removes just that unit\'s entry; nothing else moves', () => {
+  const g = new Game({ width: 5, height: 5, units: [{ x: 0, y: 0 }, { x: 2, y: 2 }, { x: 4, y: 4 }] });
+  g.queueOrder(1, move(1, 0));
+  g.queueOrder(2, move(2, 1));
+  g.queueOrder(3, move(4, 3));
+  assert.equal(g.cancelOrder(2), true);
+  assert.deepEqual(g.queue.map((e) => e.unitId), [1, 3]);
+  assert.equal(g.cancelOrder(2), false, 'nothing left to cancel');
+  g.tick();
+  assert.deepEqual(pos(g, 2), [2, 2]);
+});

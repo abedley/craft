@@ -348,6 +348,17 @@ export class Game {
   }
 
   /**
+   * Remove one unit's order from the queue (nothing else moves). Cancelling
+   * a build channel carried from last turn breaks it, as any other order
+   * would. Returns whether there was one.
+   */
+  cancelOrder(unitId) {
+    const before = this.state.queue.length;
+    this.state.queue = this.state.queue.filter((e) => e.unitId !== unitId);
+    return this.state.queue.length !== before;
+  }
+
+  /**
    * Remove unit orders from the queue; with a team, only that team's.
    * Projectiles in flight are never removed. With `keepCarried`, orders
    * carried over from last turn (a builder's channel) are kept too.

@@ -20,8 +20,9 @@
 // makes the CPU re-plan. "Back" restores the snapshot taken just before the
 // last "End turn", including both sides' staged orders (an exact undo).
 
-import { Game, Teams, MAX_SPEED, move, quickMove, charge, teleport, build, chargePlan, distancesTo, distance, ALL_DIRECTIONS, attack, TerrainTypes, DEFAULT_TERRAIN, DIRECTION_ANGLES, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
+import { Game, Teams, MAX_SPEED, move, quickMove, charge, teleport, build, chargePlan, distancesTo, distance, ALL_DIRECTIONS, attack, TerrainTypes, DEFAULT_TERRAIN, UnitTypes, DEFAULT_UNIT_TYPE } from '../engine/index.js';
 import { Match, MatchStatus } from '../match.js';
+import { nearestDirection as nearestDir, previewOf, fmtOrder } from '../app/shared.js';
 import { Renderer } from './renderer.js';
 import { scenarios } from '../scenarios.js';
 
@@ -343,7 +344,7 @@ export class DebugUI {
               this.hint(`Queued: unit ${sel.id} TELEPORT to ${x},${y}${tp.leavesMine ? ', leaving a mine' : ''}.`);
             }
           } else if (sel && def.charge && sel.charges > 0) {
-            const dir = nearestDirection(this.renderer, sel, x, y, def.attack?.directions ?? ALL_DIRECTIONS);
+            const dir = nearestDir((cx, cy) => this.renderer.center(cx, cy), sel, x, y, def.attack?.directions ?? ALL_DIRECTIONS);
             this.match.playerOrder(sel.id, charge(dir));
             const plan = chargePlan(this.game, sel, dir);
             const ends = plan.reason === 'collided' ? `into #${plan.by}` : plan.reason === 'terrain' ? 'until blocked' : `${plan.path.length - 1} hexes`;
@@ -406,7 +407,7 @@ export class DebugUI {
     if (!unit) return null;
     const def = UnitTypes[unit.type];
     if (!def.attack) return null;
-    return (x, y) => attack(nearestDirection(this.renderer, unit, x, y, def.attack.directions));
+    return (x, y) => attack(nearestDir((cx, cy) => this.renderer.center(cx, cy), unit, x, y, def.attack.directions));
   }
 
   tick() {
@@ -519,20 +520,7 @@ export class DebugUI {
   /** Run the next tick on a throwaway clone to show what will happen. */
   computePreview() {
     if (!$('#chk-preview').checked) return null;
-    const events = this.game.clone().tick();
-    const moved = new Map();
-    const blocked = new Map();
-    const projectiles = [];
-    const killed = new Set();
-    const attackBlocked = new Set();
-    for (const e of events) {
-      if (e.type === 'moved') moved.set(e.unitId, e.path);
-      if (e.type === 'blocked') blocked.set(e.unitId, e.reason);
-      if (e.type === 'projectileMoved') projectiles.push(e.path);
-      if (e.type === 'killed') killed.add(e.unitId);
-      if (e.type === 'attackBlocked') attackBlocked.add(e.unitId);
-    }
-    return { moved, blocked, projectiles, killed, attackBlocked };
+    return previewOf(this.game);
   }
 
   render() {
@@ -619,35 +607,6 @@ function hasAbility(u) {
   return !!((d.charge && u.charges > 0) || (d.teleport && u.teleports !== 0) || d.build);
 }
 
-function fmtOrder(o) {
-  if (o.type === 'move') return `${o.quick ? 'QUICK ' : ''}move(${o.x}, ${o.y})`;
-  if (o.type === 'charge') return `CHARGE ${o.dir}`;
-  if (o.type === 'teleport') return `TELEPORT to ${o.x},${o.y}`;
-  if (o.type === 'build') return 'BUILD';
-  if (o.type === 'attack') return `attack(${o.dir})`;
-  return o.type;
-}
-
-// Tie-break when a tap is exactly between two allowed directions.
-const TAP_PRIORITY = ['up', 'down', 'up-right', 'down-right', 'down-left', 'up-left'];
-
-/**
- * The allowed hex direction closest in angle to the on-screen line from a
- * unit to a tapped cell (angles are measured on screen, since hex rows are
- * staggered).
- */
-function nearestDirection(renderer, u, x, y, allowed) {
-  const [ax, ay] = renderer.center(u.x, u.y);
-  const [bx, by] = renderer.center(x, y);
-  const target = Math.atan2(by - ay, bx - ax);
-  let best = null;
-  for (const dir of TAP_PRIORITY.filter((d) => allowed.includes(d))) {
-    let diff = Math.abs(target - DIRECTION_ANGLES[dir]);
-    if (diff > Math.PI) diff = 2 * Math.PI - diff;
-    if (!best || diff < best.diff - 1e-9) best = { dir, diff };
-  }
-  return best.dir;
-}
 
 function fmtEvent(e) {
   switch (e.type) {

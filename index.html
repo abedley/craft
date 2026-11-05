@@ -5,75 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="theme-color" content="#111418">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="theme-color" content="#f4f1ea">
   <title>Craft</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Patrick+Hand&family=Permanent+Marker&display=swap">
+  <link rel="stylesheet" href="css/game.css">
 </head>
 <body>
-  <main id="app">
-    <header class="status">
-      <span>Turn <b id="tick">0</b></span>
-      <b id="status" class="outcome"></b>
-      <span>Queue <b id="queue-count">0</b></span>
-      <span class="hash">#<b id="hash">--------</b></span>
-    </header>
-
-    <div id="board-wrap">
-      <canvas id="board" aria-label="Game board"></canvas>
-    </div>
-
-    <div class="hint" id="hint">Tap a unit to select it.</div>
-
-    <div class="row segmented" role="radiogroup" aria-label="Tap mode">
-      <button data-mode="move" class="active">Move</button>
-      <button data-mode="quick" title="One-time move that goes first">Quick</button>
-      <button data-mode="ability" title="Pikemen charge, stalkers teleport">Ability</button>
-      <button data-mode="attack">Attack</button>
-      <button data-mode="add">Add</button>
-      <button data-mode="remove">Remove</button>
-      <button data-mode="paint" title="Paint terrain">Paint</button>
-    </div>
-
-    <div class="row segmented" id="terrain-row" role="radiogroup" aria-label="Terrain to paint" hidden></div>
-
-    <div class="row" id="unit-row">
-      <select id="unit-type" aria-label="Type for new units"></select>
-      <select id="unit-team" aria-label="Team for new units"></select>
-      <select id="speed" aria-label="Unit speed"></select>
-    </div>
-
-    <div class="row">
-      <button id="btn-back" title="Undo last turn">&#9664; Back</button>
-      <button id="btn-tick" class="primary">End turn &#9654;</button>
-      <button id="btn-auto" title="Tick automatically">Auto</button>
-    </div>
-
-    <div class="row">
-      <button id="btn-clear" title="Clear queued orders">Clear</button>
-      <label class="toggle"><input type="checkbox" id="chk-preview" checked> Preview</label>
-      <select id="scenario" aria-label="Scenario"></select>
-    </div>
-
-    <section class="panel">
-      <nav class="tabs">
-        <button data-tab="queue" class="active">Queue</button>
-        <button data-tab="log">Log</button>
-        <button data-tab="units">Units</button>
-        <button data-tab="state">State</button>
-      </nav>
-      <div class="tab-body" id="tab-queue"></div>
-      <div class="tab-body" id="tab-log" hidden></div>
-      <div class="tab-body" id="tab-units" hidden></div>
-      <div class="tab-body" id="tab-state" hidden>
-        <div class="row">
-          <button id="btn-copy">Copy</button>
-          <button id="btn-load">Load from text</button>
-        </div>
-        <textarea id="state-json" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
-      </div>
-    </section>
-  </main>
-  <script type="module" src="src/main.js"></script>
+  <main id="root"><p class="loading">inking…</p></main>
+  <noscript>Craft needs JavaScript.</noscript>
+  <script type="module" src="src/app/main.js"></script>
 </body>
 </html>

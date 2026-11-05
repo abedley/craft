@@ -1,0 +1,17 @@
+{
+  "title": "Craft",
+  "levels": [
+    {
+      "id": "escort-1",
+      "title": "The Bridge",
+      "scenario": "Escort the builder",
+      "goal": "Get the builder ★ to the flag ⚑",
+      "brief": "Our builder must reach the far side of the river. The only bridge is covered by enemy gunslingers. Keep the builder alive.",
+      "tips": [
+        "Numbered markers show the enemy's plan, in the order it happens.",
+        "Buildings stop shots. The builder can put one up in 2 turns.",
+        "Quick moves (ϟ) and charges (») jump to the front of the queue."
+      ]
+    }
+  ]
+}

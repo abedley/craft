@@ -5,11 +5,16 @@ iPhone 13 Pro held vertically), hosted on GitHub Pages.
 
 No build step: plain ES modules served as static files.
 
+- **The game** is `index.html`: a single-player campaign, played on an isometric, 1-bit
+  hand-drawn board.
+- **The debug UI** is `debug.html`: a flat board with editing tools, every scenario, and an
+  event log.
+
 ## Run locally
 
 ```sh
-npm run serve        # http://localhost:8000
-npm test             # engine unit tests (Node 20+)
+npm run serve        # http://localhost:8000 (game), /debug.html (debug UI)
+npm test             # unit tests (Node 20+)
 ```
 
 To try it on a phone, serve on your LAN and open `http://<your-ip>:8000`.
@@ -17,8 +22,10 @@ To try it on a phone, serve on your LAN and open `http://<your-ip>:8000`.
 ## Layout
 
 ```
-index.html            debug UI shell
-css/style.css         mobile-first styles (safe areas, 44px touch targets)
+index.html            the game shell
+debug.html            debug UI shell
+css/game.css          the game's paper-and-ink styles
+css/style.css         debug UI styles (safe areas, 44px touch targets)
 src/engine/           deterministic game engine (no DOM)
   game.js             Game state, order queue, tick(), projectiles
   hex.js              hex grid geometry (directions, distance, lines)
@@ -27,12 +34,64 @@ src/engine/           deterministic game engine (no DOM)
   orders.js           order constructors + validation (move, attack)
 src/data/units.json   unit definitions (add new units here)
 src/data/terrain.json terrain definitions (add new terrain here)
+src/data/campaign.json campaign levels (add new levels here)
 src/match.js          turn structure: CPU stages orders, player orders, end turn
 src/ai/cpu.js         deterministic CPU opponent
-src/ui/               canvas renderer + debug controls
+src/ui/               debug UI: flat canvas renderer + debug controls
+src/app/              the game UI
+  main.js             boot + screen router (title -> campaign -> battle)
+  campaign.js         level list + saved progress (localStorage)
+  screens/            title / campaign screens, the battle screen
+  battleView.js       the isometric board renderer (cached terrain, depth-sorted things)
+  iso.js              isometric projection, camera (fit / zoom / pan), picking (no DOM)
+  ink.js              1-bit drawing kit: seeded wobbly lines, hatching, stipple
+  art/                terrain, unit figures, intents and effects
+  controls.js         tap / pan / pinch gestures
+  shared.js           helpers used by both UIs (direction snapping, preview, paths)
 src/scenarios.js      preset boards: matches and rule demos
-test/                 node:test suites for the engine
+test/                 node:test suites (engine, campaign, iso view)
 ```
+
+## The game
+
+Portrait only, built for an iPhone 13 Pro in Safari. Black ink on paper, nothing else: shading
+is hatching and stipple, never grey. Lines are drawn with a seeded wobble so they look inked by
+hand but stay still (they "boil" between three variants a few times a second).
+
+- **Title → Campaign → Battle → Result.** The campaign is a list of levels; a level opens when the
+  one before it is cleared. Progress is saved in `localStorage` (or kept for the session if
+  storage is blocked).
+- **The board** is isometric: hexes are prisms whose height comes from their terrain (visual only:
+  water sits low, grass and forest high; buildings add a storey and units stand on the roof).
+  Drag to pan, pinch to zoom (0.8–2.5×), ⌖ recenters.
+- **The enemy's plan is always on the board**, as in Into the Breach: heavy dashed arrows for its
+  moves, crosshairs on hexes it will strike or shoot, a dotted ray for shots (solid for this turn's
+  4 hexes, faint after), arcs for teleports and dashed outlines for builds. Every queue entry has a
+  **numbered badge** (black for the CPU, white for you; a double ring for fast entries) and the
+  **turn-order strip** under the board lists the queue in run order. A **✕** on a unit means it dies
+  if the turn runs as things stand (the turn is simulated on a copy).
+- **Giving orders:** tap one of your units (white). The unit card shows its stats and order; the
+  hexes it can reach are outlined. Pick **Move**, **ϟ Quick**, **Strike / Shoot**, or its ability
+  (**» Charge**, **⇢ Teleport**, **▣ Build**), then tap the board. Attacks and charges snap to the hex
+  direction nearest the tap. **✕** cancels the unit's order. Tap an enemy (black) to read its card.
+- **End Turn** runs the queue: each entry plays back in order (moves, shots, strikes, mines,
+  buildings going up), with its chip highlighted. Tap the board to speed it up. **Undo turn** goes
+  back to just before the last End Turn (both sides' orders included).
+- **Win / lose** comes from `Match#status`; the result screen offers undo, retry and the campaign.
+- `window.craft` is the app in the browser console; `craft.screen.api` drives the battle (`select`,
+  `action`, `tapHex`, `endTurn`, `match`).
+
+### Campaign levels (`src/data/campaign.json`)
+
+```json
+{ "id": "escort-1", "title": "The Bridge", "scenario": "Escort the builder",
+  "goal": "Get the builder ★ to the flag ⚑", "brief": "…", "tips": ["…"] }
+```
+
+`scenario` names a board in `src/scenarios.js` (its units, terrain and objective). Levels play in
+file order. Fonts: Patrick Hand and Permanent Marker from Google Fonts, falling back to the
+system's Marker Felt.
+
 
 ## Turns and teams
 
@@ -356,7 +415,7 @@ plain JSON. `game.hash()` is an FNV-1a hash of canonical JSON state, shown in th
 UI header, so two runs with the same orders can be compared at a glance.
 `game.snapshot()` / `Game.fromSnapshot()` give exact save/restore.
 
-## Debug UI
+## Debug UI (`debug.html`)
 
 - Starts on **Skirmish vs CPU** (a river with two bridges; **Open field vs CPU** has no terrain).
   Other matches:
