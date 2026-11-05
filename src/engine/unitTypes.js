@@ -58,9 +58,9 @@
 //   (nothing happens) if an enemy is on a neighbouring hex at the moment its
 //   queue entry runs. Attacks already made are unaffected.
 //
-//   "directions" is "all" (the 6 hex directions), "vertical" (up/down), or a
-//   list such as ["up", "down-left"]. Hex directions: up, up-right,
-//   down-right, down, down-left, up-left.
+//   "directions" is "all" (the 6 hex directions), "horizontal" (left/right), or a
+//   list such as ["left", "down-left"]. Hex directions: up-left, up-right,
+//   right, down-right, down-left, left.
 
 import data from '../data/units.json' with { type: 'json' };
 import { Directions, ALL_DIRECTIONS, OrderType } from './orders.js';
@@ -71,7 +71,7 @@ export const MAX_SPEED = 6;
 export const AttackKind = Object.freeze({ MELEE: 'melee', PROJECTILE: 'projectile' });
 export const SHAPES = Object.freeze(['circle', 'diamond', 'square', 'triangle']);
 
-const DIRECTION_SETS = { all: ALL_DIRECTIONS, vertical: Object.freeze(['up', 'down']) };
+const DIRECTION_SETS = { all: ALL_DIRECTIONS, horizontal: Object.freeze(['right', 'left']) };
 
 /** Registered unit types by key. Entries are frozen, normalized definitions. */
 export const UnitTypes = {};
@@ -217,6 +217,7 @@ function checkSpeed(v, label, fail) {
 
 function parseDirections(spec, fail) {
   if (typeof spec === 'string') {
+    if (spec === 'vertical') fail('"attack.directions": "vertical" is gone: hexes are pointy-topped now, so there is no straight up/down. Use "horizontal" or a list of directions');
     if (!DIRECTION_SETS[spec]) {
       fail(`"attack.directions" must be ${Object.keys(DIRECTION_SETS).join(', ')} or a list of hex directions (${ALL_DIRECTIONS.join(', ')})`);
     }

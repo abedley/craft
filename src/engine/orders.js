@@ -63,7 +63,7 @@ export function build() {
 export const goesToFront = (order) => !!(order?.quick || order?.type === OrderType.CHARGE);
 
 /**
- * Create an attack order in a hex direction ("up", "down-left", ...). What the
+ * Create an attack order in a hex direction ("left", "down-left", ...). What the
  * attack does (shoot, strike, ...) comes from the unit's type definition.
  */
 export function attack(dir) {

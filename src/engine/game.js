@@ -98,7 +98,7 @@ export class Game {
       throw new Error('Grid width and height must be positive integers');
     }
     this.state = {
-      grid: 'hex', // flat-topped hexes, odd-q offset coordinates (see hex.js)
+      grid: 'hex-r', // pointy-topped hexes, odd-r offset coordinates (see hex.js)
       queueVersion: 2, // sequential queue model
       width,
       height,
@@ -125,7 +125,10 @@ export class Game {
 
   static fromSnapshot(snapshot) {
     const game = new Game({ width: snapshot.width, height: snapshot.height });
-    if (snapshot.grid !== 'hex') {
+    if (snapshot.grid === 'hex') {
+      throw new Error('This save is from the flat-topped hex version of the game and can\'t be loaded on the pointy-topped grid');
+    }
+    if (snapshot.grid !== 'hex-r') {
       throw new Error('This save is from the square-grid version of the game and can\'t be loaded on the hex grid');
     }
     if (snapshot.queueVersion !== 2) {

@@ -181,7 +181,7 @@ export function drawIntent(ctx, view, game, entry, { seed = 0 } = {}) {
       ctx.beginPath();
       roof.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)));
       ctx.closePath();
-      for (const c of [0, 1, 2, 3]) {
+      for (const c of [2, 3, 4]) { // the near corners
         const top = view.corner(u.x, u.y, c, h0 + 0.85, 0.8);
         const bot = view.corner(u.x, u.y, c, h0, 0.8);
         ctx.moveTo(...top);

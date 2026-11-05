@@ -12,13 +12,13 @@ import { planTurn } from '../src/ai/cpu.js';
 const C = Teams.CPU;
 const pos = (g, id) => [g.getUnit(id).x, g.getUnit(id).y];
 
-// 5 x 5 with a river across row 2, bridged by a road at column 4.
+// 5 x 5 with a river down column 2, bridged by a road at row 4.
 const RIVER = [
-  '.....',
-  '.....',
-  '~~~~=',
-  '.....',
-  '.....',
+  '..~..',
+  '..~..',
+  '..~..',
+  '..~..',
+  '..=..',
 ];
 
 test('the shipped terrain file loads; boards default to it', () => {
@@ -26,17 +26,17 @@ test('the shipped terrain file loads; boards default to it', () => {
   for (const key of Object.keys(json.types)) assert.equal(TerrainTypes[key].name, json.types[key].name);
   assert.equal(DEFAULT_TERRAIN, 'grass');
   assert.equal(TerrainTypes.water.walkable, false);
-  const g = new Game({ width: 3, height: 2 });
+  const g = new Game({ width: 2, height: 3 });
   assert.deepEqual(g.terrain, Array(6).fill('grass'));
 });
 
 test('maps are written as one character per hex', () => {
   const g = new Game({ width: 5, height: 5, terrain: RIVER });
-  assert.equal(g.terrainAt(0, 2), 'water');
-  assert.equal(g.terrainAt(4, 2), 'road');
+  assert.equal(g.terrainAt(2, 0), 'water');
+  assert.equal(g.terrainAt(2, 4), 'road');
   assert.equal(g.terrainAt(3, 3), 'grass');
-  assert.equal(g.isWalkable(0, 2), false);
-  assert.equal(g.isWalkable(4, 2), true);
+  assert.equal(g.isWalkable(2, 0), false);
+  assert.equal(g.isWalkable(2, 4), true);
   assert.throws(() => new Game({ width: 2, height: 1, terrain: ['.'] }), /2 characters/);
   assert.throws(() => new Game({ width: 1, height: 2, terrain: ['.'] }), /2 rows/);
   assert.throws(() => new Game({ width: 1, height: 1, terrain: ['?'] }), /Unknown terrain character "\?"/);
@@ -44,11 +44,11 @@ test('maps are written as one character per hex', () => {
 
 test('units cannot be placed on, or ordered onto, water', () => {
   const g = new Game({ width: 5, height: 5, terrain: RIVER, units: [{ x: 0, y: 0 }] });
-  assert.throws(() => g.addUnit(1, 2), /can't stand on Water/);
-  assert.throws(() => g.queueOrder(1, move(1, 2)), /can't walk on Water/);
+  assert.throws(() => g.addUnit(2, 1), /can't stand on Water/);
+  assert.throws(() => g.queueOrder(1, move(2, 1)), /can't walk on Water/);
   assert.throws(() => g.setTerrain(0, 0, 'water'), /Unit 1 is standing/);
-  g.setTerrain(1, 0, 'sand');
-  assert.equal(g.terrainAt(1, 0), 'sand');
+  g.setTerrain(0, 1, 'sand');
+  assert.equal(g.terrainAt(0, 1), 'sand');
 });
 
 test('units path around water, over the bridge, and never step onto it', () => {
@@ -56,22 +56,22 @@ test('units path around water, over the bridge, and never step onto it', () => {
   // along the route as the unit's speed allows (walkToward).
   const g = new Game({ width: 5, height: 5, terrain: RIVER, units: [{ x: 0, y: 0 }] });
   const path = [pos(g, 1)];
-  while ((pos(g, 1)[0] !== 0 || pos(g, 1)[1] !== 4) && path.length < 20) {
-    g.queueOrder(1, move(...walkToward(g, g.getUnit(1), 0, 4)));
+  while ((pos(g, 1)[0] !== 4 || pos(g, 1)[1] !== 0) && path.length < 20) {
+    g.queueOrder(1, move(...walkToward(g, g.getUnit(1), 4, 0)));
     g.tick();
     path.push(pos(g, 1));
   }
-  assert.deepEqual(pos(g, 1), [0, 4]);
+  assert.deepEqual(pos(g, 1), [4, 0]);
   for (const [x, y] of path) assert.ok(g.isWalkable(x, y), `stepped on ${g.terrainAt(x, y)} at ${x},${y}`);
-  assert.ok(path.some(([x, y]) => x === 4 && y === 2), 'crossed by the bridge');
+  assert.ok(path.some(([x, y]) => x === 2 && y === 4), 'crossed by the bridge');
   // A shortest walking route: same length as the BFS distance.
-  assert.equal(path.length - 1, distancesTo(g, 0, 4).get('0,0'));
+  assert.equal(path.length - 1, distancesTo(g, 4, 0).get('0,0'));
 });
 
 test('with no route the unit stays put; open ground is unchanged (straight hex lines)', () => {
   const sealed = new Game({ width: 5, height: 5, terrain: RIVER.map((r) => r.replace('=', '~')), units: [{ x: 0, y: 0 }] });
-  assert.throws(() => sealed.queueOrder(1, move(0, 4)), /no route/);
-  assert.deepEqual(walkToward(sealed, sealed.getUnit(1), 0, 4), [0, 0]);
+  assert.throws(() => sealed.queueOrder(1, move(4, 0)), /no route/);
+  assert.deepEqual(walkToward(sealed, sealed.getUnit(1), 4, 0), [0, 0]);
 
   const open = new Game({ width: 8, height: 8 });
   for (const [ax, ay, bx, by] of [[0, 0, 3, 3], [7, 7, 0, 0], [0, 7, 7, 0]]) {
@@ -83,10 +83,10 @@ test('with no route the unit stays put; open ground is unchanged (straight hex l
 
 test('projectiles and strikes ignore terrain', () => {
   const g = new Game({
-    width: 1, height: 6, terrain: ['.', '~', '~', '~', '.', '.'],
-    units: [{ x: 0, y: 0, type: 'gunslinger' }, { x: 0, y: 4 }],
+    width: 6, height: 1, terrain: ['.~~~..'],
+    units: [{ x: 0, y: 0, type: 'gunslinger' }, { x: 4, y: 0 }],
   });
-  g.queueOrder(1, attack('down'));
+  g.queueOrder(1, attack('right'));
   const events = g.tick();
   assert.ok(events.some((e) => e.type === 'killed' && e.unitId === 2), 'shot flew over the water');
 });
@@ -97,7 +97,7 @@ test('terrain is part of the saved state and the hash', () => {
   assert.notEqual(a.hash(), b.hash());
   const copy = Game.fromSnapshot(JSON.parse(JSON.stringify(a.snapshot())));
   assert.equal(copy.hash(), a.hash());
-  assert.equal(copy.terrainAt(0, 2), 'water');
+  assert.equal(copy.terrainAt(2, 0), 'water');
 });
 
 test('terrain definitions are validated', () => {
@@ -112,13 +112,13 @@ test('terrain definitions are validated', () => {
 
 test('new terrain types can be added in JSON', () => {
   registerTerrainTypes({ types: { lava: { name: 'Lava', char: '^', color: '#7a2a10', walkable: false } } });
-  const g = new Game({ width: 3, height: 1, terrain: ['.^.'] });
-  assert.equal(g.isWalkable(1, 0), false);
-  assert.throws(() => g.addUnit(1, 0), /can't stand on Lava/);
+  const g = new Game({ width: 1, height: 3, terrain: ['.', '^', '.'] });
+  assert.equal(g.isWalkable(0, 1), false);
+  assert.throws(() => g.addUnit(0, 1), /can't stand on Lava/);
 });
 
 test('the CPU walks around water to reach the player', () => {
-  const g = new Game({ width: 5, height: 5, terrain: RIVER, units: [{ x: 0, y: 4 }, { x: 0, y: 0, team: C }] });
+  const g = new Game({ width: 5, height: 5, terrain: RIVER, units: [{ x: 4, y: 0 }, { x: 0, y: 0, team: C }] });
   const m = new Match(g);
   m.startTurn();
   for (let t = 0; t < 10; t++) {
@@ -126,15 +126,15 @@ test('the CPU walks around water to reach the player', () => {
     m.endTurn();
   }
   const cpu = g.getUnit(2);
-  assert.ok(!cpu || cpu.y > 2 || (cpu.x === 4 && cpu.y === 2), 'CPU crossed the river (or died trying)');
+  assert.ok(!cpu || cpu.x > 2 || (cpu.x === 2 && cpu.y === 4), 'CPU crossed the river (or died trying)');
 });
 
 test('the CPU gunslinger picks a firing hex it can stand on, and shoots across water', () => {
   // Enemy at (2,4); the only hexes in its column above it are water except row 0.
   const g = new Game({
     width: 5, height: 5,
-    terrain: ['.....', '..~..', '..~..', '..~..', '.....'],
-    units: [{ x: 0, y: 0, type: 'gunslinger', team: C }, { x: 2, y: 4 }],
+    terrain: ['.....', '.....', '.~~~.', '.....', '.....'],
+    units: [{ x: 0, y: 0, type: 'gunslinger', team: C }, { x: 4, y: 2 }],
   });
   const [[, order]] = planTurn(g, C);
   assert.equal(order.type, 'move');
@@ -142,8 +142,8 @@ test('the CPU gunslinger picks a firing hex it can stand on, and shoots across w
   // From (2,0) it can shoot straight down over the water.
   const g2 = new Game({
     width: 5, height: 5,
-    terrain: ['.....', '..~..', '..~..', '..~..', '.....'],
-    units: [{ x: 2, y: 0, type: 'gunslinger', team: C }, { x: 2, y: 4 }],
+    terrain: ['.....', '.....', '.~~~.', '.....', '.....'],
+    units: [{ x: 0, y: 2, type: 'gunslinger', team: C }, { x: 4, y: 2 }],
   });
-  assert.deepEqual(planTurn(g2, C), [[1, attack('down')]]);
+  assert.deepEqual(planTurn(g2, C), [[1, attack('right')]]);
 });

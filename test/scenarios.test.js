@@ -1,7 +1,8 @@
 // The demo scenarios, and the escort-mission objective they use.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Game, Teams, move } from '../src/engine/index.js';
+import { Game, Teams, move, distancesTo } from '../src/engine/index.js';
+import { rayCells } from '../src/app/shared.js';
 import { Match, MatchStatus } from '../src/match.js';
 import { planTurn } from '../src/ai/cpu.js';
 import { scenarios } from '../src/scenarios.js';
@@ -90,17 +91,29 @@ test('escort objective survives a snapshot round-trip', () => {
 });
 
 test('the CPU goes for the escorted unit rather than the nearest one', () => {
-  // A CPU gunslinger at (1,0) has two player units in its lines of fire: a
-  // pikeman 2 hexes away down-right at (3,1), and the escorted builder 7
-  // hexes away down the column. It shoots at the builder.
+  // A CPU gunslinger at (0,1) has two player units in its lines of fire: a
+  // pikeman 2 hexes away down-right at (1,3), and the escorted builder 7
+  // hexes away along the row. It shoots at the builder.
   const g = new Game({
-    width: 5, height: 8,
-    units: [{ x: 1, y: 7, type: 'builder' }, { x: 1, y: 0, type: 'gunslinger', team: C }, { x: 3, y: 1 }],
-    objective: { kind: 'escort', unitId: 1, to: [1, 0] },
+    width: 8, height: 5,
+    units: [{ x: 7, y: 1, type: 'builder' }, { x: 0, y: 1, type: 'gunslinger', team: C }, { x: 1, y: 3 }],
+    objective: { kind: 'escort', unitId: 1, to: [0, 1] },
   });
   const [[, order]] = planTurn(g, C);
-  assert.deepEqual(order, { type: 'attack', dir: 'down' });
+  assert.deepEqual(order, { type: 'attack', dir: 'right' });
   // Without the escort objective it would take the nearer shot.
   g.state.objective = null;
   assert.deepEqual(planTurn(g, C)[0][1], { type: 'attack', dir: 'down-right' });
+});
+
+test('escort: both CPU gunslingers\' diagonal lines of fire cross on the bridge', () => {
+  const g = scenarios['Escort the builder']();
+  const bridge = [3, 4];
+  assert.equal(g.terrainAt(...bridge), 'road');
+  const onLine = (x, y, dir) => rayCells(g, x, y, dir).some(([cx, cy]) => cx === bridge[0] && cy === bridge[1]);
+  const gunslingers = g.units.filter((u) => u.team === C && u.type === 'gunslinger');
+  assert.equal(gunslingers.length, 2);
+  assert.ok(gunslingers.every((u) => ['down-left', 'down-right'].some((d) => onLine(u.x, u.y, d))));
+  // The builder can still get to the flag.
+  assert.ok(distancesTo(g, ...g.objective.to, Teams.PLAYER).has('3,9'));
 });

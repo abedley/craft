@@ -17,8 +17,8 @@ test('units default to the player team; unknown teams are rejected', () => {
 });
 
 test('friendly fire: a projectile kills a teammate in its line', () => {
-  const g = new Game({ width: 1, height: 6, units: [{ x: 0, y: 0, type: G }, { x: 0, y: 2 }, { x: 0, y: 4, team: C }] });
-  g.queueOrder(1, attack('down'));
+  const g = new Game({ width: 6, height: 1, units: [{ x: 0, y: 0, type: G }, { x: 2, y: 0 }, { x: 4, y: 0, team: C }] });
+  g.queueOrder(1, attack('right'));
   const events = g.tick();
   const k = events.find((e) => e.type === 'killed');
   assert.deepEqual([k.unitId, k.team], [2, P]);
@@ -31,7 +31,7 @@ test('orders join the end in the order given; the CPU stages at the start of the
   const m = new Match(g);
   m.startTurn(); // the queue starts empty; the CPU's plan goes in first
   assert.deepEqual(g.queue.map((q) => g.getUnit(q.unitId).team), [C]);
-  m.playerOrder(1, move(1, 0)); // joins the end
+  m.playerOrder(1, move(0, 1)); // joins the end
   assert.deepEqual(g.queue.map((q) => q.unitId), [2, 1]);
   // Staging again in the same turn doesn't add a second CPU plan.
   m.startTurn();
@@ -41,7 +41,7 @@ test('orders join the end in the order given; the CPU stages at the start of the
 test('nothing reorders the queue: an order queued before the CPU stages stays ahead of it', () => {
   const g = new Game({ width: 6, height: 6, units: [{ x: 0, y: 0 }, { x: 5, y: 5, team: C }] });
   g.getUnit(2).charges = 0;
-  g.queueOrder(1, move(1, 0)); // e.g. a scenario's pre-queued order
+  g.queueOrder(1, move(0, 1)); // e.g. a scenario's pre-queued order
   const m = new Match(g);
   m.startTurn();
   assert.deepEqual(g.queue.map((q) => g.getUnit(q.unitId).team), [P, C]);
@@ -50,14 +50,14 @@ test('nothing reorders the queue: an order queued before the CPU stages stays ah
 test('player cannot order CPU units', () => {
   const g = new Game({ width: 4, height: 4, units: [{ x: 0, y: 0 }, { x: 3, y: 3, team: C }] });
   const m = new Match(g);
-  assert.throws(() => m.playerOrder(2, move(2, 3)), /belongs to the CPU/);
+  assert.throws(() => m.playerOrder(2, move(3, 2)), /belongs to the CPU/);
 });
 
 test('clearing player orders keeps the CPU plan', () => {
   const g = new Game({ width: 6, height: 6, units: [{ x: 0, y: 0 }, { x: 5, y: 5, team: C }] });
   const m = new Match(g);
   m.startTurn();
-  m.playerOrder(1, move(1, 0));
+  m.playerOrder(1, move(0, 1));
   m.clearPlayerOrders();
   assert.deepEqual(g.queue.map((q) => q.unitId), [2]);
 });
@@ -65,7 +65,7 @@ test('clearing player orders keeps the CPU plan', () => {
 test('CPU wins a same-instant contest because it ordered first', () => {
   // The CPU pikeman is out of reach and walks toward the player's unit; the
   // player steps into the same hex at the same instant.
-  const g = new Game({ width: 3, height: 5, units: [{ x: 0, y: 2 }, { x: 1, y: 0, team: C }] });
+  const g = new Game({ width: 5, height: 3, units: [{ x: 2, y: 0 }, { x: 0, y: 1, team: C }] });
   const m = new Match(g);
   m.startTurn();
   const [{ order }] = g.queue;
@@ -74,33 +74,33 @@ test('CPU wins a same-instant contest because it ordered first', () => {
   m.playerOrder(1, move(cell.x, cell.y));
   m.endTurn();
   assert.deepEqual([g.getUnit(2).x, g.getUnit(2).y], [cell.x, cell.y]);
-  assert.deepEqual([g.getUnit(1).x, g.getUnit(1).y], [0, 2]);
+  assert.deepEqual([g.getUnit(1).x, g.getUnit(1).y], [2, 0]);
 });
 
 test('CPU gunslinger shoots an enemy in line, but not through a teammate', () => {
-  // Nearer enemy at (3,1) on the down-right line is screened by a teammate at
-  // (1,0); the enemy straight down the column at (0,5) is clear.
+  // Nearer enemy at (1,3) on the down-right line is screened by a teammate at
+  // (0,1); the enemy straight along the row at (5,0) is clear.
   const g = new Game({
     width: 8, height: 8,
-    units: [{ x: 0, y: 0, type: G, team: C }, { x: 1, y: 0, team: C }, { x: 3, y: 1 }, { x: 0, y: 5 }],
+    units: [{ x: 0, y: 0, type: G, team: C }, { x: 0, y: 1, team: C }, { x: 1, y: 3 }, { x: 5, y: 0 }],
   });
   const plan = planTurn(g, C);
-  assert.deepEqual(plan.find(([id]) => id === 1)[1], attack('down'));
+  assert.deepEqual(plan.find(([id]) => id === 1)[1], attack('right'));
 });
 
 test('CPU gunslinger blocked by a teammate moves to the nearest clear firing cell', () => {
-  // Teammate at (0,3) screens the column. Clear cells below it, such as
-  // (0,4) (4 steps), have a straight shot at the enemy at (0,6). (Speed 6 so
+  // Teammate at (3,0) screens the row. Clear cells to its right, such as
+  // (4,0) (4 steps), have a straight shot at the enemy at (6,0). (Speed 6 so
   // that destination is within one turn's walk and shows up as the order.)
-  const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: G, team: C, speed: 6 }, { x: 0, y: 3, team: C }, { x: 0, y: 6 }] });
+  const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: G, team: C, speed: 6 }, { x: 3, y: 0, team: C }, { x: 6, y: 0 }] });
   const [, order] = planTurn(g, C).find(([id]) => id === 1);
-  assert.deepEqual(order, move(0, 4));
+  assert.deepEqual(order, move(4, 0));
 });
 
 test('CPU gunslinger walks to a nearest cell with a clear shot', () => {
   for (const [ex, ey] of [[4, 6], [6, 2], [3, 7], [7, 7]]) {
     // Speed 6 so the chosen firing cell is within one turn's walk.
-    const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: G, team: C, speed: 6 }, { x: ex, y: ey }] });
+    const g = new Game({ width: 8, height: 8, units: [{ x: 0, y: 0, type: G, team: C, speed: 6 }, { x: ey, y: ex }] });
     const [[, order]] = planTurn(g, C);
     // Brute force: every cell with a clear straight line to the enemy.
     let best = Infinity;
@@ -121,49 +121,49 @@ test('CPU steps off the line of a shot in flight when it still can', () => {
   // A shot in flight flies first next turn (ahead of the CPU's moves). One
   // that would reach the CPU unit on that flight can't be outrun, so the CPU
   // doesn't try; one that would only reach it on the flight after, can be.
-  const g = new Game({ width: 3, height: 10, units: [{ x: 1, y: 0, type: G }, { x: 1, y: 7, team: C }] });
-  g.queueOrder(1, attack('down'));
-  g.tick(); // shot at (1,4), 3 hexes away: it hits on its next flight
-  assert.ok(!planTurn(g, C).some(([, o]) => o.type === 'move' && o.x !== 1));
+  const g = new Game({ width: 10, height: 3, units: [{ x: 0, y: 1, type: G }, { x: 7, y: 1, team: C }] });
+  g.queueOrder(1, attack('right'));
+  g.tick(); // shot at (4,1), 3 hexes away: it hits on its next flight
+  assert.ok(!planTurn(g, C).some(([, o]) => o.type === 'move' && o.y !== 1));
 
-  const g2 = new Game({ width: 3, height: 14, units: [{ x: 1, y: 0, type: G }, { x: 1, y: 10, team: C }] });
-  g2.queueOrder(1, attack('down'));
-  g2.tick(); // shot at (1,4), 6 hexes away: reaches (1,8) next flight, (1,10) the one after
+  const g2 = new Game({ width: 14, height: 3, units: [{ x: 0, y: 1, type: G }, { x: 10, y: 1, team: C }] });
+  g2.queueOrder(1, attack('right'));
+  g2.tick(); // shot at (4,1), 6 hexes away: reaches (8,1) next flight, (10,1) the one after
   const m = new Match(g2, { vsCpu: true });
   m.startTurn();
-  assert.deepEqual(g2.queue.find((e) => e.unitId === 2), { unitId: 2, order: move(2, 10) }); // up-right, off the line
+  assert.deepEqual(g2.queue.find((e) => e.unitId === 2), { unitId: 2, order: move(10, 0) }); // up-left, off the line
   m.endTurn();
   m.endTurn();
   assert.ok(g2.getUnit(2), 'CPU unit survived');
 });
 
 test('match status: won, lost, draw', () => {
-  const won = new Match(new Game({ width: 1, height: 5, units: [{ x: 0, y: 0, type: G }, { x: 0, y: 4, team: C }] }));
+  const won = new Match(new Game({ width: 5, height: 1, units: [{ x: 0, y: 0, type: G }, { x: 4, y: 0, team: C }] }));
   won.game.getUnit(2).charges = 0; // (with its charge it would rush in next to us and block the shot)
-  won.startTurn(); // the CPU pikeman (out of reach) steps to (0,3)
-  won.playerOrder(1, attack('down')); // then our shot reaches it
+  won.startTurn(); // the CPU pikeman (out of reach) steps to (3,0)
+  won.playerOrder(1, attack('right')); // then our shot reaches it
   won.endTurn();
   assert.equal(won.status, MatchStatus.WON);
-  assert.throws(() => won.playerOrder(1, move(0, 1)), /over/);
+  assert.throws(() => won.playerOrder(1, move(1, 0)), /over/);
 
   // The CPU's shot is staged first, so it lands before ours is ever fired.
-  const lost = new Match(new Game({ width: 1, height: 5, units: [{ x: 0, y: 0, type: G }, { x: 0, y: 4, type: G, team: C }] }));
+  const lost = new Match(new Game({ width: 5, height: 1, units: [{ x: 0, y: 0, type: G }, { x: 4, y: 0, type: G, team: C }] }));
   lost.startTurn();
-  lost.playerOrder(1, attack('down'));
+  lost.playerOrder(1, attack('right'));
   lost.endTurn();
   assert.equal(lost.status, MatchStatus.LOST);
 
   // Draw: two shots 6 hexes apart are both fired on turn 1 (out of range) and
   // both land on turn 2, when they fly first as carried-over entries.
-  const draw = new Match(new Game({ width: 1, height: 7, units: [{ x: 0, y: 0, type: G }, { x: 0, y: 6, type: G, team: C }] }));
+  const draw = new Match(new Game({ width: 7, height: 1, units: [{ x: 0, y: 0, type: G }, { x: 6, y: 0, type: G, team: C }] }));
   draw.startTurn();
-  draw.playerOrder(1, attack('down'));
+  draw.playerOrder(1, attack('right'));
   draw.endTurn();
   assert.equal(draw.status, MatchStatus.PLAYING);
   draw.endTurn();
   assert.equal(draw.status, MatchStatus.DRAW);
 
-  const sandbox = new Match(new Game({ width: 1, height: 3, units: [{ x: 0, y: 0 }] }));
+  const sandbox = new Match(new Game({ width: 3, height: 1, units: [{ x: 0, y: 0 }] }));
   assert.equal(sandbox.status, MatchStatus.PLAYING);
 });
 
@@ -172,8 +172,8 @@ test('a full AI-vs-AI match replays identically', () => {
     const g = new Game({
       width: 8, height: 8,
       units: [
-        { x: 0, y: 0, type: G }, { x: 0, y: 7, type: G }, { x: 1, y: 3 },
-        { x: 7, y: 7, type: G, team: C }, { x: 7, y: 0, type: G, team: C }, { x: 6, y: 4, team: C },
+        { x: 0, y: 0, type: G }, { x: 7, y: 0, type: G }, { x: 3, y: 1 },
+        { x: 7, y: 7, type: G, team: C }, { x: 0, y: 7, type: G, team: C }, { x: 4, y: 6, team: C },
       ],
     });
     const m = new Match(g);

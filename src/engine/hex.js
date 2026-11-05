@@ -1,53 +1,54 @@
 // Hex grid geometry.
 //
-// The board is a rectangle of flat-topped hexes in "odd-q" layout: columns
-// are straight vertical lines and every odd column is shifted down by half a
-// hex. Positions are stored as offset coordinates (x = column, y = row), which
-// keeps the board rectangular and the state readable. Internally, geometry is
-// done in axial coordinates (q, r), where the six directions are fixed
-// vectors.
+// The board is a rectangle of pointy-topped hexes (a corner points up and
+// down) in "odd-r" layout: rows are straight horizontal lines and every odd
+// row is shifted right by half a hex. Positions are stored as offset
+// coordinates (x = column, y = row), which keeps the board rectangular and the
+// state readable. Internally, geometry is done in axial coordinates (q, r),
+// where the six directions are fixed vectors.
 //
-// Each hex has six neighbours: up, down, up-left, up-right, down-left and
-// down-right (no straight left/right with flat-topped hexes). Straight lines
-// run through opposite sides: up/down, up-left/down-right, up-right/down-left.
+// Each hex has six neighbours: left, right, up-left, up-right, down-left and
+// down-right (no straight up/down with pointy-topped hexes). Straight lines
+// run through opposite sides: left/right, up-left/down-right,
+// up-right/down-left.
 //
 // Everything here is integer arithmetic except hexLine's rounding, which
 // uses fixed epsilon nudges so results are identical on every JS engine.
 
 /** Axial (dq, dr) vector for each direction. */
 export const Directions = Object.freeze({
-  up: Object.freeze([0, -1]),
+  'up-left': Object.freeze([0, -1]),
   'up-right': Object.freeze([1, -1]),
-  'down-right': Object.freeze([1, 0]),
-  down: Object.freeze([0, 1]),
+  right: Object.freeze([1, 0]),
+  'down-right': Object.freeze([0, 1]),
   'down-left': Object.freeze([-1, 1]),
-  'up-left': Object.freeze([-1, 0]),
+  left: Object.freeze([-1, 0]),
 });
 
 export const ALL_DIRECTIONS = Object.freeze(Object.keys(Directions));
 
 export const OPPOSITE = Object.freeze({
-  up: 'down', down: 'up',
+  left: 'right', right: 'left',
+  'up-left': 'down-right', 'down-right': 'up-left',
   'up-right': 'down-left', 'down-left': 'up-right',
-  'down-right': 'up-left', 'up-left': 'down-right',
 });
 
 /** Screen angle (radians, y down) of each direction, for touch input and drawing. */
 export const DIRECTION_ANGLES = Object.freeze({
-  up: -Math.PI / 2,
-  'up-right': -Math.PI / 6,
-  'down-right': Math.PI / 6,
-  down: Math.PI / 2,
-  'down-left': (5 * Math.PI) / 6,
-  'up-left': (-5 * Math.PI) / 6,
+  right: 0,
+  'up-right': -Math.PI / 3,
+  'up-left': (-2 * Math.PI) / 3,
+  left: Math.PI,
+  'down-left': (2 * Math.PI) / 3,
+  'down-right': Math.PI / 3,
 });
 
 export function toAxial(x, y) {
-  return [x, y - (x - (x & 1)) / 2];
+  return [x - (y - (y & 1)) / 2, y];
 }
 
 export function fromAxial(q, r) {
-  return [q, r + (q - (q & 1)) / 2];
+  return [q + (r - (r & 1)) / 2, r];
 }
 
 /** The neighbouring cell in a direction (may be off the board). */

@@ -4,7 +4,7 @@ import { step, distance } from '../engine/hex.js';
 import { nextStep, distancesTo } from '../engine/game.js';
 
 // Tie-break when a tap is exactly between two allowed directions.
-const TAP_PRIORITY = ['up', 'down', 'up-right', 'down-right', 'down-left', 'up-left'];
+const TAP_PRIORITY = ['up-left', 'up-right', 'right', 'left', 'down-right', 'down-left'];
 
 /**
  * The allowed hex direction closest in angle to the on-screen line from a

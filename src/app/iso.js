@@ -1,19 +1,29 @@
 // Isometric view of the hex board (no DOM; testable in node).
 //
-// The board's flat-topped hexes (odd-q layout, see engine/hex.js) are laid on
+// The board's pointy-topped hexes (odd-r layout, see engine/hex.js) are laid on
 // a ground plane that is tilted away from the viewer: plane y is squashed by
 // SQUASH, and height lifts things straight up the screen. Every hex is drawn
 // as a prism whose top sits at its terrain's (visual-only) height.
 //
-// World units are hex radii: a hex centre is at plane (1.5 x, √3 (y + x%2/2)).
+// World units are hex radii: a hex centre is at plane (√3 (x + y%2/2), 1.5 y).
 // screen = origin + [px, py * SQUASH - h * LIFT] * scale.
 
 import { getTerrainType } from '../engine/terrain.js';
 
-export const SQUASH = 0.58;
+export const SQUASH = 0.72;
 export const LIFT = 0.55; // screen height of one height unit, in hex radii
 export const BASE = -0.55; // bottom of every prism
 const SQRT3 = Math.sqrt(3);
+
+/**
+ * The side faces of a hex prism that face the viewer: the two lower edges
+ * of the top face (corner 3 is the bottom corner). 'right' is in shade,
+ * 'left' is lit.
+ */
+export const NEAR_EDGES = Object.freeze([
+  Object.freeze({ a: 2, b: 3, side: 'right' }),
+  Object.freeze({ a: 3, b: 4, side: 'left' }),
+]);
 
 /** Visual height of each terrain type's top face (unknown types get a default). */
 export const TERRAIN_HEIGHT = { water: 0.12, sand: 0.42, road: 0.45, grass: 0.5, forest: 0.5 };
@@ -40,7 +50,13 @@ export class IsoView {
 
   /** Plane coordinates (hex radii) of a hex centre. */
   plane(x, y) {
-    return [1.5 * x, SQRT3 * (y + 0.5 * (x & 1))];
+    return [SQRT3 * (x + 0.5 * (y & 1)), 1.5 * y];
+  }
+
+  /** The board's extent on the ground plane (hex radii), corners included. */
+  planeBounds() {
+    const { width: w, height: h } = this.game;
+    return { x0: -SQRT3 / 2, y0: -1, x1: SQRT3 * (w - 1 + (h > 1 ? 0.5 : 0)) + SQRT3 / 2, y1: 1.5 * (h - 1) + 1 };
   }
 
   /** Height of a hex's top face. */
@@ -65,10 +81,10 @@ export class IsoView {
     return this.project(px, py, h);
   }
 
-  /** Corner k (0..5, flat-top: 0 = right, going clockwise on screen) at height h. */
+  /** Corner k (0..5, pointy-top: 0 = top, going clockwise on screen; 3 = bottom) at height h. */
   corner(x, y, k, h, inset = 1) {
     const [px, py] = this.plane(x, y);
-    const a = (Math.PI / 3) * k;
+    const a = (Math.PI / 3) * k - Math.PI / 2;
     return this.project(px + Math.cos(a) * inset, py + Math.sin(a) * inset, h);
   }
 
@@ -78,15 +94,17 @@ export class IsoView {
   }
 
   /**
-   * The visible side faces of a prism from hTop down to hBottom: the three
-   * edges on the near (screen-down) side. Returns [{ pts, side }] where side
-   * is 'right' | 'front' | 'left' (for shading).
+   * The visible side faces of a prism from hTop down to hBottom: the two
+   * lower edges (see NEAR_EDGES). Returns [{ pts, side }] where side is
+   * 'right' | 'left' (for shading).
    */
-  sides(x, y, hTop, hBottom = BASE) {
-    const sideNames = ['right', 'front', 'left'];
-    return [[0, 1], [1, 2], [2, 3]].map(([a, b], i) => ({
-      side: sideNames[i],
-      pts: [this.corner(x, y, a, hTop), this.corner(x, y, b, hTop), this.corner(x, y, b, hBottom), this.corner(x, y, a, hBottom)],
+  sides(x, y, hTop, hBottom = BASE, inset = 1) {
+    return NEAR_EDGES.map(({ a, b, side }) => ({
+      side,
+      pts: [
+        this.corner(x, y, a, hTop, inset), this.corner(x, y, b, hTop, inset),
+        this.corner(x, y, b, hBottom, inset), this.corner(x, y, a, hBottom, inset),
+      ],
     }));
   }
 

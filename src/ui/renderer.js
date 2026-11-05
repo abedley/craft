@@ -1,7 +1,7 @@
 // Canvas renderer for the board. Purely a view: it reads game state and
 // draws; it never mutates the game.
 //
-// The board is flat-topped hexes in odd-q offset layout (see engine/hex.js).
+// The board is pointy-topped hexes in odd-r offset layout (see engine/hex.js).
 // `size` is the hex radius (centre to corner); `cell` is the distance between
 // neighbouring hex centres and is used to scale everything drawn in a cell.
 
@@ -13,7 +13,7 @@ const SQRT3 = Math.sqrt(3);
 
 /** Board size in units of the hex radius: [width, height]. */
 function boardExtent(game) {
-  return [1.5 * (game.width - 1) + 2, SQRT3 * (game.height + 0.5)];
+  return [SQRT3 * (game.width + (game.height > 1 ? 0.5 : 0)), 1.5 * (game.height - 1) + 2];
 }
 
 const COLORS = {
@@ -61,8 +61,8 @@ export class Renderer {
     this.size = Math.min(this.cssW / bw, this.cssH / bh);
     this.cell = this.size * SQRT3;
     // Centre of hex (0, 0).
-    this.ox = (this.cssW - bw * this.size) / 2 + this.size;
-    this.oy = (this.cssH - bh * this.size) / 2 + (SQRT3 / 2) * this.size;
+    this.ox = (this.cssW - bw * this.size) / 2 + (SQRT3 / 2) * this.size;
+    this.oy = (this.cssH - bh * this.size) / 2 + this.size;
   }
 
   /** Convert a pointer event to a hex, or null if outside the board. */
@@ -70,22 +70,22 @@ export class Renderer {
     const rect = this.canvas.getBoundingClientRect();
     const px = ev.clientX - rect.left - this.ox;
     const py = ev.clientY - rect.top - this.oy;
-    const q = ((2 / 3) * px) / this.size;
-    const r = ((-1 / 3) * px + (SQRT3 / 3) * py) / this.size;
+    const q = ((SQRT3 / 3) * px - (1 / 3) * py) / this.size;
+    const r = ((2 / 3) * py) / this.size;
     const [x, y] = fromAxial(...axialRound(q, r));
     return game.inBounds(x, y) ? { x, y } : null;
   }
 
   center(x, y) {
-    return [this.ox + 1.5 * this.size * x, this.oy + SQRT3 * this.size * (y + 0.5 * (x & 1))];
+    return [this.ox + SQRT3 * this.size * (x + 0.5 * (y & 1)), this.oy + 1.5 * this.size * y];
   }
 
-  /** Trace a flat-topped hexagon. */
+  /** Trace a pointy-topped hexagon. */
   hexPath(cx, cy, radius) {
     const { ctx } = this;
     ctx.beginPath();
     for (let k = 0; k < 6; k++) {
-      const a = (Math.PI / 3) * k;
+      const a = (Math.PI / 3) * k - Math.PI / 6;
       const px = cx + radius * Math.cos(a);
       const py = cy + radius * Math.sin(a);
       if (k === 0) ctx.moveTo(px, py);

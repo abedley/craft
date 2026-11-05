@@ -17,8 +17,8 @@ export function drawTile(ctx, view, x, y, key, seed = 0) {
   const r = rng(seedOf('tile', x, y, seed));
   const k = penOf(view);
   const h = view.groundHeight(x, y);
-  // Sides: left lit, front mid, right dark.
-  const gaps = { left: 7, front: 4.2, right: 2.6 };
+  // Sides: left lit, right in shade.
+  const gaps = { left: 5.5, right: 2.6 };
   for (const { side, pts } of view.sides(x, y, h)) {
     poly(ctx, pts, r, { fill: PAPER, width: 1.2 * k, amp: 0.5 });
     hatch(ctx, pts, r, { angle: Math.PI / 2, gap: gaps[side] * k, width: 0.8 * k, amp: 0.35 });
@@ -168,17 +168,12 @@ export function drawBuilding(ctx, view, b, seed = 0, rise = 1) {
   const h1 = h0 + BUILDING_HEIGHT * rise;
   const inset = 0.8;
   const cpu = b.team === 'cpu';
-  const gaps = { left: cpu ? 2.4 : 6, front: cpu ? 1.8 : 3.6, right: cpu ? 1.4 : 2.4 };
-  ['left', 'front', 'right'].reverse().forEach((side, i) => {
-    // The three near side faces, inset to match the roof.
-    const [a, c] = [[0, 1], [1, 2], [2, 3]][i];
-    const quad = [
-      view.corner(b.x, b.y, a, h1, inset), view.corner(b.x, b.y, c, h1, inset),
-      view.corner(b.x, b.y, c, h0, inset), view.corner(b.x, b.y, a, h0, inset),
-    ];
+  const gaps = { left: cpu ? 2.2 : 5, right: cpu ? 1.4 : 2.4 };
+  // The near side faces, inset to match the roof.
+  view.sides(b.x, b.y, h1, h0, inset).forEach(({ side, pts: quad }) => {
     poly(ctx, quad, r, { fill: PAPER, width: 1.5 * k, amp: 0.5 });
     hatch(ctx, quad, r, { angle: Math.PI / 2, gap: gaps[side] * k, width: 0.8 * k, amp: 0.3 });
-    if (side === 'front' && rise > 0.6) {
+    if (side === 'left' && rise > 0.6) {
       // Doorway.
       const [fx, fy] = [(quad[2][0] + quad[3][0]) / 2, (quad[2][1] + quad[3][1]) / 2];
       const dw = view.scale * 0.13;
@@ -190,7 +185,7 @@ export function drawBuilding(ctx, view, b, seed = 0, rise = 1) {
   poly(ctx, roof, r, { fill: PAPER, width: 1.7 * k, amp: 0.5 });
   poly(ctx, view.face(b.x, b.y, h1, inset * 0.72), r, { width: 0.9 * k, amp: 0.4 });
   if (rise >= 1) {
-    const [rx, ry] = view.corner(b.x, b.y, 4, h1, inset * 0.6);
+    const [rx, ry] = view.corner(b.x, b.y, 5, h1, inset * 0.55);
     flag(ctx, rx, ry, view.scale * 0.55, r, k, cpu);
   }
 }
@@ -244,13 +239,12 @@ export function drawPaperDecor(ctx, view, seed = 0, pad = 2) {
   const r = rng(seedOf('decor', view.game.width, view.game.height, seed));
   const k = penOf(view);
   const s = view.scale;
-  const w = 1.5 * (view.game.width - 1);
-  const hgt = Math.sqrt(3) * (view.game.height - 0.5);
-  const n = Math.round((w + hgt) * 1.6);
+  const b = view.planeBounds();
+  const n = Math.round((b.x1 - b.x0 + b.y1 - b.y0) * 1.6);
   for (let i = 0; i < n; i++) {
-    const px = -1 - pad + r() * (w + 2 + pad * 2);
-    const py = -1.2 - pad + r() * (hgt + 2.4 + pad * 2);
-    const inside = px > -1.3 && px < w + 1.3 && py > -1.2 && py < hgt + 1.1;
+    const px = b.x0 - pad + r() * (b.x1 - b.x0 + pad * 2);
+    const py = b.y0 - pad + r() * (b.y1 - b.y0 + pad * 2);
+    const inside = px > b.x0 - 0.3 && px < b.x1 + 0.3 && py > b.y0 - 0.2 && py < b.y1 + 0.6;
     if (inside) continue;
     const [sx, sy] = view.project(px, py, BASE);
     if (r() < 0.55) tuft(ctx, sx, sy, s * 0.12, r, k);

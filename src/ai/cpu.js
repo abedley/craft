@@ -54,7 +54,7 @@ import { getUnitType, AttackKind } from '../engine/unitTypes.js';
 import { step, distance, OPPOSITE, neighbors } from '../engine/hex.js';
 
 // Fixed tie-break order for directions.
-const DIR_PRIORITY = ['up', 'down', 'up-right', 'down-right', 'down-left', 'up-left'];
+const DIR_PRIORITY = ['up-left', 'up-right', 'right', 'left', 'down-right', 'down-left'];
 const hexDist = (a, b) => distance(a.x, a.y, b.x, b.y);
 const inPriorityOrder = (dirs) => DIR_PRIORITY.filter((d) => dirs.includes(d));
 
@@ -95,7 +95,7 @@ export function planTurn(game, team) {
 
     const dir = atk && (atk.kind === AttackKind.MELEE
       ? bestStrike(game, u, atk, teamCells)
-      : bestShot(game, u, atk));
+      : bestShot(game, u, atk, teamCells));
     if (dir) {
       plan.push([u.id, attack(dir)]);
       continue;
@@ -197,7 +197,7 @@ export function firstInLine(game, x, y, dir, maxDist = Infinity) {
   return null;
 }
 
-function bestShot(game, u, atk) {
+function bestShot(game, u, atk, teamCells = new Set()) {
   // The shot would fail with an enemy next to us (see unitTypes.js).
   if (atk.blockedByAdjacentEnemy && game.adjacentEnemy(u)) return null;
   // ...or with too many of our shots still in flight when our entry comes up.
@@ -213,6 +213,15 @@ function bestShot(game, u, atk) {
   for (const dir of inPriorityOrder(atk.directions)) {
     const hit = firstInLine(game, u.x, u.y, dir, atk.range ?? Infinity);
     if (!hit || hit.unit.team === u.team) continue;
+    // Don't fire through a hex a teammate is moving into this turn (its move
+    // is earlier in the queue, so it would be standing there).
+    let [cx, cy] = [u.x, u.y];
+    let friendly = false;
+    for (let d = 1; d < hit.dist; d++) {
+      [cx, cy] = step(cx, cy, dir);
+      if (teamCells.has(`${cx},${cy}`)) friendly = true;
+    }
+    if (friendly) continue;
     const vip = hit.unit.id === vipId;
     if (!best || (vip && !best.vip) || (vip === best.vip && hit.dist < best.dist)) best = { dir, dist: hit.dist, vip };
   }

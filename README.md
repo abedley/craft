@@ -227,15 +227,18 @@ All of this reads from the unit definitions, so JSON-only units are played sensi
 
 ## Hex grid
 
-The board is a rectangle of **flat-topped hexes** (`src/engine/hex.js`), default 8 × 8. Positions are
-`(x, y)` = (column, row), and odd columns sit half a hex lower ("odd-q" layout). Each hex has six
-neighbours and six directions: `up`, `up-right`, `down-right`, `down`, `down-left`, `up-left`. There is
-no straight left/right. Straight lines run through opposite sides, so a **column is a straight
-up/down line**, which suits teams facing each other from the top and bottom of a portrait phone.
+The board is a rectangle of **pointy-topped hexes** (a corner points up and down;
+`src/engine/hex.js`), default 8 × 8. Positions are `(x, y)` = (column, row), and odd rows sit half a
+hex to the right ("odd-r" layout). Each hex has six neighbours and six directions: `up-left`,
+`up-right`, `right`, `down-right`, `down-left`, `left`. There is **no straight up/down**. Straight
+lines run through opposite sides: a **row is a straight left/right line**, and the four diagonals run
+at 60°. A column zigzags, but is still connected, so a map's "column" road is walkable end to end.
+Shots and charges between teams at the top and bottom of the board travel on the diagonals.
 
 Distances are hex steps. Internally the geometry uses axial coordinates; `step`, `distance`,
-`neighbors` and `hexLineStep` are exported for other code. Saved states are tagged `grid: 'hex'`, and
-square-grid saves from earlier versions are rejected with a clear error.
+`neighbors` and `hexLineStep` are exported for other code. Saved states are tagged `grid: 'hex-r'`;
+saves from the earlier flat-topped grid (`grid: 'hex'`) and the square grid are rejected with a clear
+error.
 
 ## Terrain
 
@@ -346,7 +349,7 @@ error messages that name the unit and field.
 | `shape` | `circle` (default), `diamond`, `square`, `triangle` |
 | `attack` | leave it out for a unit that can't attack |
 | `attack.kind` | `melee` or `projectile` |
-| `attack.directions` | `all` (the 6 hex directions), `vertical` (up/down), or a list like `["up", "down-left"]` |
+| `attack.directions` | `all` (the 6 hex directions), `horizontal` (left/right), or a list like `["left", "down-left"]` |
 | `attack.reach` | melee: how many hexes in a row it strikes |
 | `attack.speed` | projectile: hexes flown per queue entry, 1–6 |
 | `attack.range` | projectile: max cells travelled; leave it out for unlimited |
@@ -420,7 +423,7 @@ UI header, so two runs with the same orders can be compared at a glance.
 - Starts on **Skirmish vs CPU** (a river with two bridges; **Open field vs CPU** has no terrain).
   Other matches:
   - **Escort the builder** (8×10): get your builder (gold star) to the flag at the top of the road,
-    over the only bridge, past CPU gunslingers covering the road. Its buildings stop shots, so it
+    over the only bridge, past two CPU gunslingers whose diagonal lines of fire cross on the bridge. Its buildings stop shots, so it
     can build cover on the way.
   - **Big battle (12×14)**: 10 units a side (4 pikemen, 3 gunslingers, 2 stalkers, a builder) on a
     big map with a three-bridge river, a lake, roads and forest.
