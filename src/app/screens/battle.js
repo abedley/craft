@@ -6,6 +6,10 @@
 // taps the board; each order goes through Match#playerOrder. End Turn runs
 // the queue (one tick) and plays the events back step by step on a copy of
 // the board from before the tick; then the real state takes over.
+//
+// Autosave: the battle is saved (app.save) each time a turn starts - when the
+// mission begins, right after End Turn resolves (before playback), and after
+// an undo - so reopening the game resumes it. Winning clears the save.
 
 import {
   Game, Teams, getUnitType, move, quickMove, attack, charge, teleport, build,
@@ -87,7 +91,18 @@ export function battleScreen(app, { levelId }) {
     view.setGame(game);
     s.selectedId = null;
     s.mode = null;
+    autosave();
     refresh();
+  }
+
+  /** Save the battle as the turn starts (or record the win and drop the save). */
+  function autosave() {
+    if (s.match.status === MatchStatus.WON) {
+      app.progress.markCleared(level.id);
+      app.save.clear();
+    } else {
+      app.save.save(level.id, game(), s.undo);
+    }
   }
 
   // ---- derived state -------------------------------------------------------
@@ -403,6 +418,7 @@ export function battleScreen(app, { levelId }) {
     s.selectedId = null;
     s.mode = null;
     const events = s.match.endTurn();
+    autosave();
     await playback(Game.fromSnapshot(before), events);
     afterTurn();
   }
@@ -439,7 +455,6 @@ export function battleScreen(app, { levelId }) {
       stamp(`TURN ${pad2(game().tickCount + 1)}`);
       return;
     }
-    if (st === MatchStatus.WON) app.progress.markCleared(level.id);
     showResult(st);
   }
 
@@ -700,6 +715,7 @@ export function battleScreen(app, { levelId }) {
     view.setGame(s.match.game);
     s.selectedId = null;
     s.mode = null;
+    autosave();
     refresh();
     stamp(`TURN ${pad2(game().tickCount + 1)}`);
   }
@@ -728,7 +744,10 @@ export function battleScreen(app, { levelId }) {
   const onResize = () => { if (view.resize()) s.dirty = true; };
   window.addEventListener('resize', onResize);
 
-  newMatch(startLevel(level.id));
+  // Resume the saved battle for this level if there is one.
+  const saved = app.save.load(level.id);
+  if (saved) s.undo = saved.undo;
+  newMatch(saved?.game ?? startLevel(level.id));
 
   return {
     el,
@@ -738,7 +757,8 @@ export function battleScreen(app, { levelId }) {
       view.fit();
       s.dirty = true;
       requestAnimationFrame(frame);
-      stamp('TURN 01');
+      if (s.match.status === MatchStatus.PLAYING) stamp(`TURN ${pad2(game().tickCount + 1)}`);
+      else showResult(s.match.status);
     },
     destroy() {
       detach();

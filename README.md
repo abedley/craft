@@ -40,7 +40,7 @@ src/ai/cpu.js         deterministic CPU opponent
 src/ui/               debug UI: flat canvas renderer + debug controls
 src/app/              the game UI
   main.js             boot + screen router (title -> campaign -> battle)
-  campaign.js         level list + saved progress (localStorage)
+  campaign.js         level list + saved progress + battle autosave (localStorage)
   screens/            title / campaign screens, the battle screen
   battleView.js       draws each frame into a small art buffer and scales it up crisply;
                       camera (fit / zoom / pan) in whole device pixels
@@ -69,6 +69,11 @@ and flags are sprites built in code from simple shapes plus a 1px outline. Units
 - **Title → Campaign → Battle → Result.** The campaign is a list of levels; a level opens when the
   one before it is cleared. Progress is saved in `localStorage` (or kept for the session if
   storage is blocked).
+- **Autosave.** The battle in progress is saved as each turn starts (when the mission begins,
+  right after End Turn resolves, and after an undo), along with the undo step, in one slot
+  (`craft.battle.v1`, see `BattleSave` in `src/app/campaign.js`). Opening the game goes straight
+  back into it; Continue and the mission's **Resume** button do too. Orders given during a turn
+  aren't saved until it ends. Winning clears the save, and starting another mission replaces it.
 - **The board** is flat: every terrain tile sits at the same height, and forest is drawn as flat
   tree crowns rather than standing trees, so nothing hides a unit. Only buildings rise (a storey;
   units stand on the roof).

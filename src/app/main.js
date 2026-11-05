@@ -1,6 +1,7 @@
 // The game: boots the screens (title -> campaign -> battle) into #root.
+// If a battle was autosaved, it opens straight back into it.
 
-import { Progress } from './campaign.js';
+import { Progress, BattleSave } from './campaign.js';
 import { titleScreen, campaignScreen } from './screens/menus.js';
 import { battleScreen } from './screens/battle.js';
 
@@ -11,6 +12,7 @@ let current = null;
 
 const app = {
   progress: new Progress(),
+  save: new BattleSave(),
   show(name, args = {}) {
     current?.destroy?.();
     root.replaceChildren();
@@ -27,4 +29,4 @@ window.craft = app;
 
 // Start once the pixel fonts are in (so the first screen doesn't jump).
 const fontsReady = document.fonts?.load ? Promise.all([document.fonts.load('16px "Silkscreen"'), document.fonts.load('16px "Pixelify Sans"')]).catch(() => {}) : Promise.resolve();
-Promise.race([fontsReady, new Promise((r) => setTimeout(r, 1500))]).then(() => app.show('title'));
+Promise.race([fontsReady, new Promise((r) => setTimeout(r, 1500))]).then(() => (app.save.levelId ? app.show('battle', { levelId: app.save.levelId }) : app.show('title')));

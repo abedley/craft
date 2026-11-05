@@ -5,14 +5,20 @@
 // names a board in src/scenarios.js. A level is open once the one before it
 // is cleared. Progress lives in localStorage; if that's unavailable (private
 // mode, blocked storage) it's kept in memory for the session.
+//
+// The battle in progress is autosaved too (BattleSave): one slot holding the
+// level id, a Game snapshot taken as each turn starts (the CPU's plan already
+// staged), and the undo snapshot. The game resumes it when it opens.
 
 import data from '../data/campaign.json' with { type: 'json' };
 import { scenarios } from '../scenarios.js';
+import { Game } from '../engine/game.js';
 
 export const CAMPAIGN = data;
 export const LEVELS = data.levels;
 
 const KEY = 'craft.progress.v1';
+const BATTLE_KEY = 'craft.battle.v1';
 
 export function getLevel(id) {
   return LEVELS.find((l) => l.id === id) ?? null;
@@ -72,6 +78,61 @@ export class Progress {
       this.storage?.setItem(KEY, JSON.stringify(this.data));
     } catch {
       // Storage full or blocked: progress lasts for this session only.
+    }
+  }
+}
+
+export class BattleSave {
+  /** @param {Storage|null} [storage] defaults to localStorage when it works */
+  constructor(storage = defaultStorage()) {
+    this.storage = storage;
+    this.data = null; // { levelId, game, undo } with raw snapshots
+    try {
+      const raw = storage?.getItem(BATTLE_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (parsed && getLevel(parsed.levelId) && parsed.game && typeof parsed.game === 'object') {
+        // Make sure it still loads with this version of the rules.
+        Game.fromSnapshot(parsed.game);
+        if (parsed.undo) Game.fromSnapshot(parsed.undo);
+        this.data = { levelId: parsed.levelId, game: parsed.game, undo: parsed.undo ?? null };
+      }
+    } catch {
+      // Unreadable or outdated save: drop it.
+      this.data = null;
+    }
+  }
+
+  /** The level id of the saved battle, or null. */
+  get levelId() {
+    return this.data?.levelId ?? null;
+  }
+
+  /** The saved battle for a level as { game, undo } (a fresh Game; undo is a snapshot or null), or null. */
+  load(levelId) {
+    if (!this.data || this.data.levelId !== levelId) return null;
+    try {
+      return { game: Game.fromSnapshot(this.data.game), undo: this.data.undo ? structuredClone(this.data.undo) : null };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Save a battle (replaces any other). `undo` is a snapshot or null. */
+  save(levelId, game, undo = null) {
+    this.data = { levelId, game: game.snapshot(), undo: undo ? structuredClone(undo) : null };
+    try {
+      this.storage?.setItem(BATTLE_KEY, JSON.stringify(this.data));
+    } catch {
+      // Storage full or blocked: the save lasts for this session only.
+    }
+  }
+
+  clear() {
+    this.data = null;
+    try {
+      this.storage?.removeItem(BATTLE_KEY);
+    } catch {
+      // Blocked: nothing to remove.
     }
   }
 }

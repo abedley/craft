@@ -51,8 +51,9 @@ function drawVignette(canvas, w, hgt) {
 }
 
 export function titleScreen(app) {
-  const next = app.progress.next;
-  const started = LEVELS.some((l) => app.progress.isCleared(l.id));
+  // Continue resumes the autosaved battle, else the next open level.
+  const next = app.save.levelId ?? app.progress.next.id;
+  const started = app.save.levelId != null || LEVELS.some((l) => app.progress.isCleared(l.id));
   const el = h(`
     <div class="screen title">
       <div class="title-art"><canvas></canvas></div>
@@ -64,7 +65,7 @@ export function titleScreen(app) {
       </div>
       <p class="meta">best played upright · tap, drag, pinch</p>
     </div>`);
-  el.querySelector('[data-go="play"]').onclick = () => app.show('battle', { levelId: next.id });
+  el.querySelector('[data-go="play"]').onclick = () => app.show('battle', { levelId: next });
   el.querySelector('[data-go="campaign"]').onclick = () => app.show('campaign');
   return {
     el,
@@ -88,6 +89,7 @@ export function campaignScreen(app) {
         ${LEVELS.map((l, i) => {
     const open = app.progress.isOpen(l.id);
     const done = app.progress.isCleared(l.id);
+    const label = app.save.levelId === l.id ? 'RESUME' : done ? 'PLAY AGAIN' : 'DEPLOY';
     return `
           <article class="level ${open ? '' : 'locked'} ${done ? 'done' : ''}">
             <div class="num">${String(i + 1).padStart(2, '0')}</div>
@@ -96,7 +98,7 @@ export function campaignScreen(app) {
               <p class="goal-line">${esc(l.goal)}</p>
               <p>${esc(l.brief)}</p>
               <ul class="tips">${(l.tips ?? []).map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
-              <button class="primary" data-level="${esc(l.id)}" ${open ? '' : 'disabled'}>${done ? 'PLAY AGAIN' : 'DEPLOY'} ▸</button>
+              <button class="primary" data-level="${esc(l.id)}" ${open ? '' : 'disabled'}>${label} ▸</button>
             </div>
           </article>
           <div class="trail"></div>`;

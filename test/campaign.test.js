@@ -1,7 +1,7 @@
 // The campaign level list and saved progress (src/app/campaign.js).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LEVELS, Progress, startLevel, getLevel } from '../src/app/campaign.js';
+import { LEVELS, Progress, BattleSave, startLevel, getLevel } from '../src/app/campaign.js';
 import { scenarios } from '../src/scenarios.js';
 import { Match, MatchStatus } from '../src/match.js';
 
@@ -9,6 +9,7 @@ class MemoryStorage {
   constructor(init = {}) { this.items = { ...init }; }
   getItem(k) { return k in this.items ? this.items[k] : null; }
   setItem(k, v) { this.items[k] = String(v); }
+  removeItem(k) { delete this.items[k]; }
 }
 
 test('every level names a real scenario and starts a playable match', () => {
@@ -53,4 +54,41 @@ test('progress survives broken or missing storage', () => {
   const none = new Progress(null);
   assert.equal(none.isOpen(LEVELS[0].id), true);
   assert.equal(none.isOpen('nope'), false);
+});
+
+test('battle save: a turn-start snapshot round-trips and resumes exactly', () => {
+  const storage = new MemoryStorage();
+  const id = LEVELS[0].id;
+  const m = new Match(startLevel(id));
+  m.startTurn();
+  const undo = m.game.snapshot();
+  m.endTurn();
+  new BattleSave(storage).save(id, m.game, undo);
+
+  const loaded = new BattleSave(storage);
+  assert.equal(loaded.levelId, id);
+  assert.equal(loaded.load('nope'), null, 'only for its own level');
+  const { game, undo: u } = loaded.load(id);
+  assert.deepEqual(game.snapshot(), m.game.snapshot());
+  assert.deepEqual(u, undo);
+  // The CPU's staged plan is part of the save, so resuming doesn't replan.
+  const resumed = new Match(game);
+  assert.deepEqual(resumed.startTurn(), []);
+  assert.deepEqual(resumed.game.snapshot(), m.game.snapshot());
+
+  loaded.clear();
+  assert.equal(new BattleSave(storage).levelId, null);
+});
+
+test('battle save: junk, unknown levels and broken storage are ignored', () => {
+  assert.equal(new BattleSave(new MemoryStorage({ 'craft.battle.v1': '{not json' })).levelId, null);
+  const g = startLevel(LEVELS[0].id).snapshot();
+  assert.equal(new BattleSave(new MemoryStorage({ 'craft.battle.v1': JSON.stringify({ levelId: 'gone', game: g }) })).levelId, null);
+  assert.equal(new BattleSave(new MemoryStorage({ 'craft.battle.v1': JSON.stringify({ levelId: LEVELS[0].id, game: { ...g, queueVersion: 1 } }) })).levelId, null, 'outdated rules');
+  const broken = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }, removeItem() { throw new Error('denied'); } };
+  const b = new BattleSave(broken);
+  assert.doesNotThrow(() => b.save(LEVELS[0].id, startLevel(LEVELS[0].id)));
+  assert.equal(b.levelId, LEVELS[0].id, 'kept in memory');
+  assert.doesNotThrow(() => b.clear());
+  assert.equal(new BattleSave(null).levelId, null);
 });
